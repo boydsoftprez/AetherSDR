@@ -3,34 +3,32 @@
 #include <QWidget>
 #include <QStringList>
 
-class QTabWidget;
+class QPushButton;
+class QScrollArea;
+class QVBoxLayout;
 
 namespace AetherSDR {
 
 class SliceModel;
 class RxApplet;
 
-// AppletPanel — dockable right-side panel containing radio control applets.
-//
-// Currently implemented tabs: RX
-// Planned: TX, P/CW, PHNE, EQ, ANLG
+// AppletPanel — right-side panel with a row of toggle buttons at the top.
+// Each button shows/hides its corresponding applet in the scrollable stack
+// below.  Multiple applets can be visible simultaneously.
 class AppletPanel : public QWidget {
     Q_OBJECT
 
 public:
     explicit AppletPanel(QWidget* parent = nullptr);
 
-    // Attach the active slice to all slice-dependent applets.
     void setSlice(SliceModel* slice);
-
-    // Forward the radio's antenna list to all relevant applets.
     void setAntennaList(const QStringList& ants);
 
     RxApplet* rxApplet() { return m_rxApplet; }
 
 private:
-    QTabWidget* m_tabs{nullptr};
-    RxApplet*   m_rxApplet{nullptr};
+    RxApplet*    m_rxApplet{nullptr};
+    QVBoxLayout* m_stack{nullptr};   // layout inside the scroll area
 };
 
 } // namespace AetherSDR
