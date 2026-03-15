@@ -103,6 +103,16 @@ void RadioModel::setPanCenter(double centerMhz)
             .arg(m_panId).arg(centerMhz, 0, 'f', 6));
 }
 
+void RadioModel::setPanDbmRange(float minDbm, float maxDbm)
+{
+    if (m_panId.isEmpty()) return;
+    m_connection.sendCommand(
+        QString("display pan set %1 min_dbm=%2 max_dbm=%3")
+            .arg(m_panId)
+            .arg(static_cast<double>(minDbm), 0, 'f', 2)
+            .arg(static_cast<double>(maxDbm), 0, 'f', 2));
+}
+
 // ─── Connection slots ─────────────────────────────────────────────────────────
 
 void RadioModel::onConnected()

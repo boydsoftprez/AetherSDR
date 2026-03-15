@@ -63,6 +63,8 @@ signals:
     void centerChangeRequested(double newCenterMhz);
     // Emitted when the user drags a filter edge to resize the passband.
     void filterChangeRequested(int lowHz, int highHz);
+    // Emitted when the user adjusts the dBm scale (drag or arrows).
+    void dbmRangeChangeRequested(float minDbm, float maxDbm);
 
 protected:
     void paintEvent(QPaintEvent* event) override;
@@ -79,6 +81,7 @@ private:
     void drawVfoMarker(QPainter& p, const QRect& specRect, const QRect& wfRect);
     void drawWaterfall(QPainter& p, const QRect& r);
     void drawFreqScale(QPainter& p, const QRect& r);
+    void drawDbmScale(QPainter& p, const QRect& specRect);
 
     void pushWaterfallRow(const QVector<float>& bins, int destWidth,
                           double tileLowMhz = -1, double tileHighMhz = -1);
@@ -139,6 +142,12 @@ private:
     // Filter edge drag state
     enum class FilterEdge { None, Low, High };
     FilterEdge m_draggingFilter{FilterEdge::None};
+    // dBm scale strip drag state
+    static constexpr int DBM_STRIP_W = 36;  // width of the dBm scale strip
+    static constexpr int DBM_ARROW_H = 14;  // height of each arrow button
+    bool  m_draggingDbm{false};
+    int   m_dbmDragStartY{0};
+    float m_dbmDragStartRef{0.0f};
 };
 
 } // namespace AetherSDR

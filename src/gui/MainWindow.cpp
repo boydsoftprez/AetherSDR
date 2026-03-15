@@ -119,6 +119,8 @@ MainWindow::MainWindow(QWidget* parent)
             this, [this](int lo, int hi) {
         if (auto* s = activeSlice()) s->setFilterWidth(lo, hi);
     });
+    connect(spectrum(), &SpectrumWidget::dbmRangeChangeRequested,
+            &m_radioModel, &RadioModel::setPanDbmRange);
 
     // ── Click-to-tune on the spectrum ─────────────────────────────────────
     connect(spectrum(), &SpectrumWidget::frequencyClicked,

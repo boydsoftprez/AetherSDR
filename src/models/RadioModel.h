@@ -60,6 +60,7 @@ public:
     void setTransmit(bool tx);
     void setPanBandwidth(double bandwidthMhz);
     void setPanCenter(double centerMhz);
+    void setPanDbmRange(float minDbm, float maxDbm);
 
 signals:
     void infoChanged();

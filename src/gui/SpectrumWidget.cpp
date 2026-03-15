@@ -144,6 +144,42 @@ void SpectrumWidget::mousePressEvent(QMouseEvent* ev)
         return;
     }
 
+    // Check for click on dBm scale strip (right edge of FFT area)
+    if (y < specH) {
+        const int mx = static_cast<int>(ev->position().x());
+        const int stripX = width() - DBM_STRIP_W;
+
+        if (mx >= stripX) {
+            // Arrow row (side by side: left = up, right = down)
+            if (y < DBM_ARROW_H) {
+                const float bottom = m_refLevel - m_dynamicRange;
+                if (mx < stripX + DBM_STRIP_W / 2) {
+                    // Up arrow: raise ref level by 10 dB, keep bottom fixed
+                    m_refLevel += 10.0f;
+                } else {
+                    // Down arrow: lower ref level by 10 dB, keep bottom fixed
+                    m_refLevel -= 10.0f;
+                }
+                m_dynamicRange = m_refLevel - bottom;
+                if (m_dynamicRange < 10.0f) {
+                    m_dynamicRange = 10.0f;
+                    m_refLevel = bottom + m_dynamicRange;
+                }
+                update();
+                emit dbmRangeChangeRequested(bottom, m_refLevel);
+                ev->accept();
+                return;
+            }
+            // Below arrows: start dBm drag (pan reference)
+            m_draggingDbm = true;
+            m_dbmDragStartY = y;
+            m_dbmDragStartRef = m_refLevel;
+            setCursor(Qt::SizeVerCursor);
+            ev->accept();
+            return;
+        }
+    }
+
     // Check for click on filter edges in FFT area (5px grab zone)
     if (y < specH) {
         const int mx = static_cast<int>(ev->position().x());
@@ -191,6 +227,18 @@ void SpectrumWidget::mouseMoveEvent(QMouseEvent* ev)
             m_waterfall = std::move(newWf);
         }
         update();
+        ev->accept();
+        return;
+    }
+
+    if (m_draggingDbm) {
+        const int dy = y - m_dbmDragStartY;
+        const int specH = static_cast<int>(contentH * m_spectrumFrac);
+        // Convert pixel drag to dB: full FFT height = full dynamic range
+        const float deltaDb = (static_cast<float>(dy) / specH) * m_dynamicRange;
+        m_refLevel = m_dbmDragStartRef + deltaDb;
+        update();
+        emit dbmRangeChangeRequested(m_refLevel - m_dynamicRange, m_refLevel);
         ev->accept();
         return;
     }
@@ -250,15 +298,25 @@ void SpectrumWidget::mouseMoveEvent(QMouseEvent* ev)
     } else if (y >= specH + DIVIDER_H && y < wfY) {
         setCursor(Qt::SizeHorCursor);
     } else if (y < specH) {
-        // In FFT area: check if hovering over a filter edge
         const int mx = static_cast<int>(ev->position().x());
-        const int loX = mhzToX(m_vfoFreqMhz + m_filterLowHz / 1.0e6);
-        const int hiX = mhzToX(m_vfoFreqMhz + m_filterHighHz / 1.0e6);
-        constexpr int GRAB = 5;
-        if (std::abs(mx - loX) <= GRAB || std::abs(mx - hiX) <= GRAB)
-            setCursor(Qt::SizeHorCursor);
-        else
-            setCursor(Qt::CrossCursor);
+        const int stripX = width() - DBM_STRIP_W;
+
+        // Hovering over dBm scale strip
+        if (mx >= stripX) {
+            if (y < DBM_ARROW_H)
+                setCursor(Qt::PointingHandCursor);
+            else
+                setCursor(Qt::SizeVerCursor);
+        } else {
+            // Check if hovering over a filter edge
+            const int loX = mhzToX(m_vfoFreqMhz + m_filterLowHz / 1.0e6);
+            const int hiX = mhzToX(m_vfoFreqMhz + m_filterHighHz / 1.0e6);
+            constexpr int GRAB = 5;
+            if (std::abs(mx - loX) <= GRAB || std::abs(mx - hiX) <= GRAB)
+                setCursor(Qt::SizeHorCursor);
+            else
+                setCursor(Qt::CrossCursor);
+        }
     } else {
         setCursor(Qt::CrossCursor);
     }
@@ -271,6 +329,12 @@ void SpectrumWidget::mouseReleaseEvent(QMouseEvent* ev)
         setCursor(Qt::CrossCursor);
         QSettings settings;
         settings.setValue("spectrum/splitRatio", static_cast<double>(m_spectrumFrac));
+        ev->accept();
+        return;
+    }
+    if (m_draggingDbm) {
+        m_draggingDbm = false;
+        setCursor(Qt::CrossCursor);
         ev->accept();
         return;
     }
@@ -432,6 +496,7 @@ void SpectrumWidget::paintEvent(QPaintEvent*)
 
     drawGrid(p, specRect);
     drawSpectrum(p, specRect);
+    drawDbmScale(p, specRect);
 
     // Draggable divider bar
     p.fillRect(divRect, QColor(0x18, 0x28, 0x38));
@@ -450,16 +515,21 @@ void SpectrumWidget::drawGrid(QPainter& p, const QRect& r)
     const int w = r.width();
     const int h = r.height();
 
-    // Horizontal dB lines every 20 dB
-    const int steps = static_cast<int>(m_dynamicRange / 20.0f);
-    for (int i = 0; i <= steps; ++i) {
-        const int y = r.top() + static_cast<int>(h * i / static_cast<float>(steps));
-        p.setPen(QPen(QColor(0x20, 0x30, 0x40), 1, Qt::DotLine));
-        p.drawLine(0, y, w, y);
+    // Horizontal dB grid lines — adaptive step matching the dBm scale strip
+    float rawDbStep = m_dynamicRange / 5.0f;
+    float dbStep;
+    if      (rawDbStep >= 20.0f) dbStep = 20.0f;
+    else if (rawDbStep >= 10.0f) dbStep = 10.0f;
+    else if (rawDbStep >= 5.0f)  dbStep = 5.0f;
+    else                          dbStep = 2.0f;
 
-        const float dbm = m_refLevel - (m_dynamicRange * i / steps);
-        p.setPen(QColor(0x40, 0x60, 0x70));
-        p.drawText(2, y + 12, QString("%1").arg(static_cast<int>(dbm)));
+    const float bottomDbm = m_refLevel - m_dynamicRange;
+    const float firstDb = std::ceil(bottomDbm / dbStep) * dbStep;
+    p.setPen(QPen(QColor(0x20, 0x30, 0x40), 1, Qt::DotLine));
+    for (float dbm = firstDb; dbm <= m_refLevel; dbm += dbStep) {
+        const float frac = (m_refLevel - dbm) / m_dynamicRange;
+        const int y = r.top() + static_cast<int>(frac * h);
+        p.drawLine(0, y, w, y);
     }
 
     // Vertical frequency grid lines — adaptive step matching the scale bar
@@ -628,6 +698,79 @@ void SpectrumWidget::drawFreqScale(QPainter& p, const QRect& r)
 
         p.setPen(QColor(0x70, 0x90, 0xb0));
         p.drawText(lx, r.bottom() - 2, label);
+    }
+}
+
+// ─── dBm scale strip (right edge of FFT area) ────────────────────────────────
+
+void SpectrumWidget::drawDbmScale(QPainter& p, const QRect& specRect)
+{
+    const int stripX = specRect.right() - DBM_STRIP_W + 1;
+    const QRect strip(stripX, specRect.top(), DBM_STRIP_W, specRect.height());
+
+    // Semi-opaque background
+    p.fillRect(strip, QColor(0x0a, 0x0a, 0x18, 220));
+
+    // Left border line
+    p.setPen(QColor(0x30, 0x40, 0x50));
+    p.drawLine(stripX, specRect.top(), stripX, specRect.bottom());
+
+    // ── Up/Down arrows side by side at top ─────────────────────────────
+    const int halfW = DBM_STRIP_W / 2;
+    const int upCx  = stripX + halfW / 2;       // left half center
+    const int dnCx  = stripX + halfW + halfW / 2; // right half center
+    const int arrowTop = specRect.top() + 2;
+    const int arrowBot = specRect.top() + DBM_ARROW_H - 2;
+
+    p.setPen(Qt::NoPen);
+    p.setBrush(QColor(0x60, 0x80, 0xa0));
+
+    // Up arrow (▲) — left side
+    QPolygon upTri;
+    upTri << QPoint(upCx - 5, arrowBot)
+          << QPoint(upCx + 5, arrowBot)
+          << QPoint(upCx,     arrowTop);
+    p.drawPolygon(upTri);
+
+    // Down arrow (▼) — right side
+    QPolygon dnTri;
+    dnTri << QPoint(dnCx - 5, arrowTop)
+          << QPoint(dnCx + 5, arrowTop)
+          << QPoint(dnCx,     arrowBot);
+    p.drawPolygon(dnTri);
+
+    // ── dBm labels ───────────────────────────────────────────────────────
+    QFont f = p.font();
+    f.setPointSize(7);
+    p.setFont(f);
+    const QFontMetrics fm(f);
+
+    const int labelTop = specRect.top() + DBM_ARROW_H + 4;
+
+    // Use adaptive step: aim for ~4-6 labels
+    float rawStep = m_dynamicRange / 5.0f;
+    float stepDb;
+    if      (rawStep >= 20.0f) stepDb = 20.0f;
+    else if (rawStep >= 10.0f) stepDb = 10.0f;
+    else if (rawStep >= 5.0f)  stepDb = 5.0f;
+    else                        stepDb = 2.0f;
+
+    const float bottomDbm = m_refLevel - m_dynamicRange;
+    const float firstLabel = std::ceil(bottomDbm / stepDb) * stepDb;
+
+    for (float dbm = firstLabel; dbm <= m_refLevel; dbm += stepDb) {
+        const float frac = (m_refLevel - dbm) / m_dynamicRange;
+        const int y = specRect.top() + static_cast<int>(frac * specRect.height());
+        if (y < labelTop || y > specRect.bottom() - 5) continue;
+
+        // Tick mark
+        p.setPen(QColor(0x50, 0x70, 0x80));
+        p.drawLine(stripX, y, stripX + 4, y);
+
+        // Label
+        const QString label = QString::number(static_cast<int>(dbm));
+        p.setPen(QColor(0x80, 0xa0, 0xb0));
+        p.drawText(stripX + 6, y + fm.ascent() / 2, label);
     }
 }
 
