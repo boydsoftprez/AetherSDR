@@ -36,7 +36,7 @@
 #include <QLabel>
 #include <QCloseEvent>
 #include <QMessageBox>
-#include <QSettings>
+#include "core/AppSettings.h"
 #include <QDebug>
 
 namespace AetherSDR {
@@ -79,19 +79,19 @@ MainWindow::MainWindow(QWidget* parent)
     connect(m_connPanel, &ConnectionPanel::connectRequested,
             this, [this](const RadioInfo& info){
         m_connPanel->setStatusText("Connecting…");
-        m_userDisconnected = false;  // user chose to connect — re-enable auto-connect
+        m_userDisconnected = false;
         m_radioModel.connectToRadio(info);
-        // Remember this radio for auto-connect on next launch
-        QSettings s("AetherSDR", "AetherSDR");
-        s.setValue("lastRadioSerial", info.serial);
+        auto& s = AppSettings::instance();
+        s.setValue("LastConnectedRadioSerial", info.serial);
+        s.save();
     });
 
     // Auto-connect: when a radio is discovered, check if it matches the last one
     connect(&m_discovery, &RadioDiscovery::radioDiscovered,
             this, [this](const RadioInfo& info) {
-        if (m_userDisconnected) return;  // user explicitly disconnected — don't auto-connect
-        QSettings s("AetherSDR", "AetherSDR");
-        const QString lastSerial = s.value("lastRadioSerial").toString();
+        if (m_userDisconnected) return;
+        const QString lastSerial = AppSettings::instance()
+            .value("LastConnectedRadioSerial").toString();
         if (!lastSerial.isEmpty() && info.serial == lastSerial
             && !m_radioModel.isConnected()) {
             qDebug() << "Auto-connecting to" << info.displayName();
@@ -101,9 +101,10 @@ MainWindow::MainWindow(QWidget* parent)
     });
     connect(m_connPanel, &ConnectionPanel::disconnectRequested,
             this, [this]{
-        m_userDisconnected = true;  // block auto-reconnect until user explicitly connects
-        QSettings s("AetherSDR", "AetherSDR");
-        s.remove("lastRadioSerial");  // clear saved radio so restart won't auto-connect
+        m_userDisconnected = true;
+        auto& s = AppSettings::instance();
+        s.remove("LastConnectedRadioSerial");
+        s.save();
         m_radioModel.disconnectFromRadio();
     });
 
@@ -304,26 +305,28 @@ MainWindow::MainWindow(QWidget* parent)
     // Start discovery
     m_discovery.startListening();
 
-    // Restore saved geometry
-    QSettings settings("AetherSDR", "AetherSDR");
-    restoreGeometry(settings.value("geometry").toByteArray());
-    restoreState(settings.value("windowState").toByteArray());
-    if (settings.contains("splitterState"))
-        m_splitter->restoreState(settings.value("splitterState").toByteArray());
-
-    // Band memory save/restore is deprecated pending redesign.
-    // Clear any stale data from previous versions.
-    settings.remove("bands");
+    // Restore saved geometry from XML settings
+    auto& s = AppSettings::instance();
+    const QString geomB64 = s.value("MainWindowGeometry").toString();
+    if (!geomB64.isEmpty())
+        restoreGeometry(QByteArray::fromBase64(geomB64.toLatin1()));
+    const QString stateB64 = s.value("MainWindowState").toString();
+    if (!stateB64.isEmpty())
+        restoreState(QByteArray::fromBase64(stateB64.toLatin1()));
+    const QString splitB64 = s.value("SplitterState").toString();
+    if (!splitB64.isEmpty())
+        m_splitter->restoreState(QByteArray::fromBase64(splitB64.toLatin1()));
 }
 
 MainWindow::~MainWindow() = default;
 
 void MainWindow::closeEvent(QCloseEvent* event)
 {
-    QSettings settings("AetherSDR", "AetherSDR");
-    settings.setValue("geometry",      saveGeometry());
-    settings.setValue("windowState",   saveState());
-    settings.setValue("splitterState", m_splitter->saveState());
+    auto& s = AppSettings::instance();
+    s.setValue("MainWindowGeometry", saveGeometry().toBase64());
+    s.setValue("MainWindowState",   saveState().toBase64());
+    s.setValue("SplitterState",     m_splitter->saveState().toBase64());
+    s.save();
     m_discovery.stopListening();
     m_radioModel.disconnectFromRadio();
     m_audio.stopRxStream();

@@ -26,6 +26,7 @@ pkg_check_modules(PORTAUDIO portaudio-2.0)
 
 # Sources
 set(CORE_SOURCES
+    src/core/AppSettings.cpp
     src/core/RadioDiscovery.cpp
     src/core/RadioConnection.cpp
     src/core/CommandParser.cpp

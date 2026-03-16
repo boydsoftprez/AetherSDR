@@ -1,4 +1,5 @@
 #include "gui/MainWindow.h"
+#include "core/AppSettings.h"
 
 #include <QApplication>
 #include <QSurfaceFormat>
@@ -51,6 +52,9 @@ int main(int argc, char* argv[])
     // Use Fusion style as a clean cross-platform base
     // (our dark theme overrides colors via stylesheet)
     app.setStyle(QStyleFactory::create("Fusion"));
+
+    // Load XML settings (auto-migrates from QSettings on first run)
+    AetherSDR::AppSettings::instance().load();
 
     qDebug() << "Starting AetherSDR" << app.applicationVersion();
 

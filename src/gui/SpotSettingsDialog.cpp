@@ -1,11 +1,11 @@
 #include "SpotSettingsDialog.h"
 #include "models/RadioModel.h"
+#include "core/AppSettings.h"
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QGridLayout>
 #include <QGroupBox>
-#include <QSettings>
 
 namespace AetherSDR {
 
@@ -16,14 +16,14 @@ SpotSettingsDialog::SpotSettingsDialog(RadioModel* model, QWidget* parent)
     setFixedSize(340, 360);
 
     // Load persisted settings
-    QSettings s("AetherSDR", "AetherSDR");
-    m_spotsEnabled    = s.value("spots/enabled", true).toBool();
-    m_overrideColors  = s.value("spots/overrideColors", false).toBool();
-    m_overrideBg      = s.value("spots/overrideBg", true).toBool();
-    m_overrideBgAutoMode = s.value("spots/overrideBgAuto", true).toBool();
-    int levels   = s.value("spots/levels", 3).toInt();
-    int position = s.value("spots/position", 50).toInt();
-    int fontSize = s.value("spots/fontSize", 16).toInt();
+    auto& s = AppSettings::instance();
+    m_spotsEnabled    = s.value("IsSpotsEnabled", "True").toString() == "True";
+    m_overrideColors  = s.value("IsSpotsOverrideColorsEnabled", "False").toString() == "True";
+    m_overrideBg      = s.value("IsSpotsOverrideBackgroundColorsEnabled", "True").toString() == "True";
+    m_overrideBgAutoMode = s.value("IsSpotsOverrideToAutoBackgroundColorEnabled", "True").toString() == "True";
+    int levels   = s.value("SpotsMaxLevel", 3).toInt();
+    int position = s.value("SpotsStartingHeightPercentage", 50).toInt();
+    int fontSize = s.value("SpotFontSize", 16).toInt();
 
     auto* root = new QVBoxLayout(this);
 
@@ -39,6 +39,12 @@ SpotSettingsDialog::SpotSettingsDialog(RadioModel* model, QWidget* parent)
     grid->setColumnStretch(1, 1);
     int row = 0;
 
+    auto saveSetting = [](const QString& key, const QVariant& val) {
+        auto& s = AppSettings::instance();
+        s.setValue(key, val);
+        s.save();
+    };
+
     // Spots: Enabled/Disabled
     grid->addWidget(new QLabel("Spots:"), row, 0);
     m_spotsToggle = new QPushButton(m_spotsEnabled ? "Enabled" : "Disabled");
@@ -48,11 +54,10 @@ SpotSettingsDialog::SpotSettingsDialog(RadioModel* model, QWidget* parent)
     m_spotsToggle->setStyleSheet(
         "QPushButton { background: #206030; color: white; border: 1px solid #305040; padding: 3px; }"
         "QPushButton:!checked { background: #603020; }");
-    connect(m_spotsToggle, &QPushButton::toggled, this, [this](bool on) {
+    connect(m_spotsToggle, &QPushButton::toggled, this, [this, saveSetting](bool on) {
         m_spotsEnabled = on;
         m_spotsToggle->setText(on ? "Enabled" : "Disabled");
-        QSettings s("AetherSDR", "AetherSDR");
-        s.setValue("spots/enabled", on);
+        saveSetting("IsSpotsEnabled", on ? "True" : "False");
     });
     grid->addWidget(m_spotsToggle, row++, 1, Qt::AlignLeft);
 
@@ -67,10 +72,9 @@ SpotSettingsDialog::SpotSettingsDialog(RadioModel* model, QWidget* parent)
     m_levelsValue->setAlignment(Qt::AlignRight);
     levelsRow->addWidget(m_levelsSlider);
     levelsRow->addWidget(m_levelsValue);
-    connect(m_levelsSlider, &QSlider::valueChanged, this, [this](int v) {
+    connect(m_levelsSlider, &QSlider::valueChanged, this, [this, saveSetting](int v) {
         m_levelsValue->setText(QString::number(v));
-        QSettings s("AetherSDR", "AetherSDR");
-        s.setValue("spots/levels", v);
+        saveSetting("SpotsMaxLevel", QString::number(v));
     });
     grid->addLayout(levelsRow, row++, 1);
 
@@ -85,10 +89,9 @@ SpotSettingsDialog::SpotSettingsDialog(RadioModel* model, QWidget* parent)
     m_positionValue->setAlignment(Qt::AlignRight);
     posRow->addWidget(m_positionSlider);
     posRow->addWidget(m_positionValue);
-    connect(m_positionSlider, &QSlider::valueChanged, this, [this](int v) {
+    connect(m_positionSlider, &QSlider::valueChanged, this, [this, saveSetting](int v) {
         m_positionValue->setText(QString::number(v));
-        QSettings s("AetherSDR", "AetherSDR");
-        s.setValue("spots/position", v);
+        saveSetting("SpotsStartingHeightPercentage", QString::number(v));
     });
     grid->addLayout(posRow, row++, 1);
 
@@ -103,10 +106,9 @@ SpotSettingsDialog::SpotSettingsDialog(RadioModel* model, QWidget* parent)
     m_fontSizeValue->setAlignment(Qt::AlignRight);
     fontRow->addWidget(m_fontSizeSlider);
     fontRow->addWidget(m_fontSizeValue);
-    connect(m_fontSizeSlider, &QSlider::valueChanged, this, [this](int v) {
+    connect(m_fontSizeSlider, &QSlider::valueChanged, this, [this, saveSetting](int v) {
         m_fontSizeValue->setText(QString::number(v));
-        QSettings s("AetherSDR", "AetherSDR");
-        s.setValue("spots/fontSize", v);
+        saveSetting("SpotFontSize", QString::number(v));
     });
     grid->addLayout(fontRow, row++, 1);
 
@@ -119,11 +121,10 @@ SpotSettingsDialog::SpotSettingsDialog(RadioModel* model, QWidget* parent)
     m_overrideColorsToggle->setStyleSheet(
         "QPushButton { background: #206030; color: white; border: 1px solid #305040; padding: 3px; }"
         "QPushButton:!checked { background: #603020; }");
-    connect(m_overrideColorsToggle, &QPushButton::toggled, this, [this](bool on) {
+    connect(m_overrideColorsToggle, &QPushButton::toggled, this, [this, saveSetting](bool on) {
         m_overrideColors = on;
         m_overrideColorsToggle->setText(on ? "Enabled" : "Disabled");
-        QSettings s("AetherSDR", "AetherSDR");
-        s.setValue("spots/overrideColors", on);
+        saveSetting("IsSpotsOverrideColorsEnabled", on ? "True" : "False");
     });
     grid->addWidget(m_overrideColorsToggle, row++, 1, Qt::AlignLeft);
 
@@ -143,15 +144,13 @@ SpotSettingsDialog::SpotSettingsDialog(RadioModel* model, QWidget* parent)
         "QPushButton:!checked { background: #603020; }";
     m_overrideBgEnabled->setStyleSheet(bgStyle);
     m_overrideBgAuto->setStyleSheet(bgStyle);
-    connect(m_overrideBgEnabled, &QPushButton::toggled, this, [this](bool on) {
+    connect(m_overrideBgEnabled, &QPushButton::toggled, this, [this, saveSetting](bool on) {
         m_overrideBg = on;
-        QSettings s("AetherSDR", "AetherSDR");
-        s.setValue("spots/overrideBg", on);
+        saveSetting("IsSpotsOverrideBackgroundColorsEnabled", on ? "True" : "False");
     });
-    connect(m_overrideBgAuto, &QPushButton::toggled, this, [this](bool on) {
+    connect(m_overrideBgAuto, &QPushButton::toggled, this, [this, saveSetting](bool on) {
         m_overrideBgAutoMode = on;
-        QSettings s("AetherSDR", "AetherSDR");
-        s.setValue("spots/overrideBgAuto", on);
+        saveSetting("IsSpotsOverrideToAutoBackgroundColorEnabled", on ? "True" : "False");
     });
     bgRow->addWidget(m_overrideBgEnabled);
     bgRow->addWidget(m_overrideBgAuto);

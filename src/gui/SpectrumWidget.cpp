@@ -7,7 +7,7 @@
 #include <QResizeEvent>
 #include <QMouseEvent>
 #include <QWheelEvent>
-#include <QSettings>
+#include "core/AppSettings.h"
 #include <cmath>
 #include <cstring>
 
@@ -24,9 +24,8 @@ SpectrumWidget::SpectrumWidget(QWidget* parent)
     setMouseTracking(true);
 
     // Restore saved FFT/waterfall split ratio
-    QSettings settings;
     m_spectrumFrac = std::clamp(
-        settings.value("spectrum/splitRatio", 0.40).toFloat(), 0.10f, 0.90f);
+        AppSettings::instance().value("SpectrumSplitRatio", "0.40").toFloat(), 0.10f, 0.90f);
 
     // Floating overlay menu (child widget, stays on top)
     m_overlayMenu = new SpectrumOverlayMenu(this);
@@ -47,8 +46,9 @@ void SpectrumWidget::setFrequencyRange(double centerMhz, double bandwidthMhz)
 void SpectrumWidget::setSpectrumFrac(float f)
 {
     m_spectrumFrac = std::clamp(f, 0.10f, 0.90f);
-    QSettings settings;
-    settings.setValue("spectrum/splitRatio", static_cast<double>(m_spectrumFrac));
+    auto& s = AppSettings::instance();
+    s.setValue("SpectrumSplitRatio", QString::number(m_spectrumFrac, 'f', 3));
+    s.save();
     update();
 }
 
@@ -372,8 +372,9 @@ void SpectrumWidget::mouseReleaseEvent(QMouseEvent* ev)
     if (m_draggingDivider) {
         m_draggingDivider = false;
         setCursor(Qt::CrossCursor);
-        QSettings settings;
-        settings.setValue("spectrum/splitRatio", static_cast<double>(m_spectrumFrac));
+        auto& s = AppSettings::instance();
+        s.setValue("SpectrumSplitRatio", QString::number(m_spectrumFrac, 'f', 3));
+        s.save();
         ev->accept();
         return;
     }
