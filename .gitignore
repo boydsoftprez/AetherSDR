@@ -3,3 +3,4 @@ build-*/
 .cache/
 *.user
 .qtc_clangd/
+reference/
