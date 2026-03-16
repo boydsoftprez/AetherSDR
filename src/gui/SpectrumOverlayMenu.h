@@ -34,8 +34,16 @@ protected:
 signals:
     void addRxClicked();
     void addTnfClicked();
-    void displayClicked();
     void daxClicked();
+    // Display sub-panel signals
+    void fftAverageChanged(int frames);
+    void fftFpsChanged(int fps);
+    void fftWeightedAverageChanged(bool on);
+    void fftFillAlphaChanged(float alpha);
+    void wfColorGainChanged(int gain);
+    void wfBlackLevelChanged(int level);
+    void wfAutoBlackChanged(bool on);
+    void wfLineDurationChanged(int ms);
     // Emitted when user selects a band from the sub-panel.
     void bandSelected(const QString& bandName, double freqMhz, const QString& mode);
     // Emitted when WNB toggle changes.
@@ -58,6 +66,8 @@ private:
     void toggleDaxPanel();
     void buildDaxPanel();
     void syncDaxPanel();
+    void toggleDisplayPanel();
+    void buildDisplayPanel();
     void hideAllSubPanels();
     void syncAntPanel();
 
@@ -93,6 +103,24 @@ private:
     QWidget*   m_daxPanel{nullptr};
     bool       m_daxPanelVisible{false};
     QComboBox* m_daxCmb{nullptr};
+
+    // Display sub-panel
+    QWidget*     m_displayPanel{nullptr};
+    bool         m_displayPanelVisible{false};
+    QSlider*     m_avgSlider{nullptr};
+    QLabel*      m_avgLabel{nullptr};
+    QSlider*     m_fpsSlider{nullptr};
+    QLabel*      m_fpsLabel{nullptr};
+    QSlider*     m_fillSlider{nullptr};
+    QLabel*      m_fillLabel{nullptr};
+    QPushButton* m_weightedAvgBtn{nullptr};
+    QSlider*     m_gainSlider{nullptr};
+    QLabel*      m_gainLabel{nullptr};
+    QSlider*     m_blackSlider{nullptr};
+    QLabel*      m_blackLabel{nullptr};
+    QPushButton* m_autoBlackBtn{nullptr};
+    QSlider*     m_rateSlider{nullptr};
+    QLabel*      m_rateLabel{nullptr};
 
     QStringList  m_antList;
     SliceModel*  m_slice{nullptr};

@@ -178,6 +178,25 @@ MainWindow::MainWindow(QWidget* parent)
         spectrum()->setRfGain(gain);
     });
 
+    // ── Display sub-panel → SpectrumWidget (client-side for now) ─────────
+    auto* overlay = spectrum()->overlayMenu();
+    connect(overlay, &SpectrumOverlayMenu::fftFillAlphaChanged,
+            spectrum(), &SpectrumWidget::setFftFillAlpha);
+    connect(overlay, &SpectrumOverlayMenu::fftAverageChanged,
+            spectrum(), &SpectrumWidget::setFftAverage);
+    connect(overlay, &SpectrumOverlayMenu::fftFpsChanged,
+            spectrum(), &SpectrumWidget::setFftFps);
+    connect(overlay, &SpectrumOverlayMenu::fftWeightedAverageChanged,
+            spectrum(), &SpectrumWidget::setFftWeightedAvg);
+    connect(overlay, &SpectrumOverlayMenu::wfColorGainChanged,
+            spectrum(), &SpectrumWidget::setWfColorGain);
+    connect(overlay, &SpectrumOverlayMenu::wfBlackLevelChanged,
+            spectrum(), &SpectrumWidget::setWfBlackLevel);
+    connect(overlay, &SpectrumOverlayMenu::wfAutoBlackChanged,
+            spectrum(), &SpectrumWidget::setWfAutoBlack);
+    connect(overlay, &SpectrumOverlayMenu::wfLineDurationChanged,
+            spectrum(), &SpectrumWidget::setWfLineDuration);
+
     // ── Panadapter stream → audio engine ──────────────────────────────────
     // All VITA-49 traffic arrives on the single client udpport socket owned
     // by PanadapterStream. It strips the header from IF-Data packets and emits

@@ -12,6 +12,7 @@
 #include <QHBoxLayout>
 #include <QSignalBlocker>
 #include <QEvent>
+#include <QFrame>
 
 namespace AetherSDR {
 
@@ -110,7 +111,7 @@ SpectrumOverlayMenu::SpectrumOverlayMenu(QWidget* parent)
         {"Band",      0, nullptr},   // 2 — toggleBandPanel
         {"ANT",       1, nullptr},   // 3 — toggleAntPanel
         {"DSP",       2, nullptr},   // 4 — toggleDspPanel
-        {"Display",  -1, &SpectrumOverlayMenu::displayClicked}, // 5
+        {"Display",   4, nullptr}, // 5 — toggleDisplayPanel
         {"DAX",       3, nullptr},   // 6 — toggleDaxPanel
     };
 
@@ -124,6 +125,8 @@ SpectrumOverlayMenu::SpectrumOverlayMenu(QWidget* parent)
             connect(btn, &QPushButton::clicked, this, &SpectrumOverlayMenu::toggleDspPanel);
         else if (def.specialIdx == 3)
             connect(btn, &QPushButton::clicked, this, &SpectrumOverlayMenu::toggleDaxPanel);
+        else if (def.specialIdx == 4)
+            connect(btn, &QPushButton::clicked, this, &SpectrumOverlayMenu::toggleDisplayPanel);
         else
             connect(btn, &QPushButton::clicked, this, def.sig);
         m_menuBtns.append(btn);
@@ -133,6 +136,7 @@ SpectrumOverlayMenu::SpectrumOverlayMenu(QWidget* parent)
     buildAntPanel();
     buildDspPanel();
     buildDaxPanel();
+    buildDisplayPanel();
     updateLayout();
 }
 
@@ -600,13 +604,15 @@ void SpectrumOverlayMenu::toggleDaxPanel()
 
 void SpectrumOverlayMenu::hideAllSubPanels()
 {
-    if (m_bandPanelVisible) { m_bandPanelVisible = false; m_bandPanel->hide(); }
-    if (m_antPanelVisible)  { m_antPanelVisible = false;  m_antPanel->hide(); }
-    if (m_dspPanelVisible)  { m_dspPanelVisible = false;  m_dspPanel->hide(); }
-    if (m_daxPanelVisible)  { m_daxPanelVisible = false;  m_daxPanel->hide(); }
+    if (m_bandPanelVisible)    { m_bandPanelVisible = false;    m_bandPanel->hide(); }
+    if (m_antPanelVisible)     { m_antPanelVisible = false;     m_antPanel->hide(); }
+    if (m_dspPanelVisible)     { m_dspPanelVisible = false;     m_dspPanel->hide(); }
+    if (m_daxPanelVisible)     { m_daxPanelVisible = false;     m_daxPanel->hide(); }
+    if (m_displayPanelVisible) { m_displayPanelVisible = false; m_displayPanel->hide(); }
     m_menuBtns[2]->setStyleSheet(kMenuBtnNormal);  // Band
     m_menuBtns[3]->setStyleSheet(kMenuBtnNormal);  // ANT
     m_menuBtns[4]->setStyleSheet(kMenuBtnNormal);  // DSP
+    m_menuBtns[5]->setStyleSheet(kMenuBtnNormal);  // Display
     m_menuBtns[6]->setStyleSheet(kMenuBtnNormal);  // DAX
 }
 
@@ -670,6 +676,164 @@ void SpectrumOverlayMenu::updateLayout()
     int totalH = m_expanded ? (pad + BTN_H + gap + m_menuBtns.size() * (BTN_H + gap))
                             : (pad + BTN_H + pad);
     setFixedSize(pad + BTN_W + pad, totalH);
+}
+
+// ── Display sub-panel ─────────────────────────────────────────────────────────
+
+void SpectrumOverlayMenu::buildDisplayPanel()
+{
+    m_displayPanel = new QWidget(parentWidget());
+    m_displayPanel->setStyleSheet("QWidget { background: rgba(15, 15, 26, 220); "
+                                   "border: 1px solid #304050; border-radius: 3px; }");
+    m_displayPanel->hide();
+
+    auto* grid = new QGridLayout(m_displayPanel);
+    grid->setContentsMargins(8, 6, 8, 6);
+    grid->setSpacing(4);
+    grid->setColumnStretch(1, 1);
+
+    auto labelStyle = QStringLiteral("QLabel { color: #8090a0; font-size: 10px; border: none; }");
+    auto valStyle   = QStringLiteral("QLabel { color: #c8d8e8; font-size: 10px; border: none;"
+                                      " min-width: 24px; }");
+    auto sliderStyle = QStringLiteral(
+        "QSlider { border: none; }"
+        "QSlider::groove:horizontal { height: 4px; background: #203040; border-radius: 2px; }"
+        "QSlider::handle:horizontal { width: 10px; height: 10px; margin: -3px 0;"
+        " background: #00b4d8; border-radius: 5px; }");
+    auto btnStyle = QStringLiteral(
+        "QPushButton { background: #1a2a3a; color: #c8d8e8; border: 1px solid #205070;"
+        " border-radius: 3px; font-size: 10px; font-weight: bold; padding: 2px 6px; }"
+        "QPushButton:hover { background: #204060; }"
+        "QPushButton:checked { background: #006040; color: #00ff88; border-color: #00a060; }");
+
+    int row = 0;
+
+    auto makeRow = [&](const QString& text, int lo, int hi, int def,
+                       QSlider*& slider, QLabel*& valLbl) {
+        auto* lbl = new QLabel(text);
+        lbl->setStyleSheet(labelStyle);
+        grid->addWidget(lbl, row, 0);
+
+        slider = new QSlider(Qt::Horizontal);
+        slider->setRange(lo, hi);
+        slider->setValue(def);
+        slider->setStyleSheet(sliderStyle);
+        grid->addWidget(slider, row, 1);
+
+        valLbl = new QLabel(QString::number(def));
+        valLbl->setStyleSheet(valStyle);
+        valLbl->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        grid->addWidget(valLbl, row, 2);
+        ++row;
+    };
+
+    // ── FFT section ───────────────────────────────────────────────────────
+    makeRow("AVG:", 0, 10, 0, m_avgSlider, m_avgLabel);
+    connect(m_avgSlider, &QSlider::valueChanged, this, [this](int v) {
+        m_avgLabel->setText(QString::number(v));
+        emit fftAverageChanged(v);
+    });
+
+    makeRow("FPS:", 5, 30, 25, m_fpsSlider, m_fpsLabel);
+    connect(m_fpsSlider, &QSlider::valueChanged, this, [this](int v) {
+        m_fpsLabel->setText(QString::number(v));
+        emit fftFpsChanged(v);
+    });
+
+    makeRow("Fill:", 0, 100, 70, m_fillSlider, m_fillLabel);
+    connect(m_fillSlider, &QSlider::valueChanged, this, [this](int v) {
+        m_fillLabel->setText(QString::number(v));
+        emit fftFillAlphaChanged(v / 100.0f);
+    });
+
+    // Weighted Average toggle
+    auto* waLbl = new QLabel("Weighted Average:");
+    waLbl->setStyleSheet(labelStyle);
+    grid->addWidget(waLbl, row, 0);
+    m_weightedAvgBtn = new QPushButton("Off");
+    m_weightedAvgBtn->setCheckable(true);
+    m_weightedAvgBtn->setChecked(false);
+    m_weightedAvgBtn->setFixedWidth(40);
+    m_weightedAvgBtn->setStyleSheet(btnStyle);
+    connect(m_weightedAvgBtn, &QPushButton::toggled, this, [this](bool on) {
+        m_weightedAvgBtn->setText(on ? "On" : "Off");
+        emit fftWeightedAverageChanged(on);
+    });
+    grid->addWidget(m_weightedAvgBtn, row, 2);
+    ++row;
+
+    // ── Separator ─────────────────────────────────────────────────────────
+    auto* sep = new QFrame;
+    sep->setFrameShape(QFrame::HLine);
+    sep->setStyleSheet("QFrame { color: #304050; border: none; }");
+    sep->setFixedHeight(2);
+    grid->addWidget(sep, row, 0, 1, 3);
+    ++row;
+
+    // ── Waterfall section ─────────────────────────────────────────────────
+    makeRow("Gain:", 0, 100, 50, m_gainSlider, m_gainLabel);
+    connect(m_gainSlider, &QSlider::valueChanged, this, [this](int v) {
+        m_gainLabel->setText(QString::number(v));
+        emit wfColorGainChanged(v);
+    });
+
+    // Black + Auto
+    auto* blackLbl = new QLabel("Black:");
+    blackLbl->setStyleSheet(labelStyle);
+    grid->addWidget(blackLbl, row, 0);
+
+    auto* blackRow = new QHBoxLayout;
+    m_blackSlider = new QSlider(Qt::Horizontal);
+    m_blackSlider->setRange(0, 125);
+    m_blackSlider->setValue(15);
+    m_blackSlider->setStyleSheet(sliderStyle);
+    blackRow->addWidget(m_blackSlider);
+
+    m_blackLabel = new QLabel("15");
+    m_blackLabel->setStyleSheet(valStyle);
+    m_blackLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    blackRow->addWidget(m_blackLabel);
+
+    m_autoBlackBtn = new QPushButton("Auto");
+    m_autoBlackBtn->setCheckable(true);
+    m_autoBlackBtn->setChecked(false);
+    m_autoBlackBtn->setFixedWidth(40);
+    m_autoBlackBtn->setStyleSheet(btnStyle);
+    blackRow->addWidget(m_autoBlackBtn);
+
+    grid->addLayout(blackRow, row, 1, 1, 2);
+    ++row;
+
+    connect(m_blackSlider, &QSlider::valueChanged, this, [this](int v) {
+        m_blackLabel->setText(QString::number(v));
+        emit wfBlackLevelChanged(v);
+    });
+    connect(m_autoBlackBtn, &QPushButton::toggled, this, [this](bool on) {
+        emit wfAutoBlackChanged(on);
+    });
+
+    makeRow("Rate:", 25, 500, 100, m_rateSlider, m_rateLabel);
+    connect(m_rateSlider, &QSlider::valueChanged, this, [this](int v) {
+        m_rateLabel->setText(QString::number(v));
+        emit wfLineDurationChanged(v);
+    });
+
+    m_displayPanel->adjustSize();
+}
+
+void SpectrumOverlayMenu::toggleDisplayPanel()
+{
+    bool wasVisible = m_displayPanelVisible;
+    hideAllSubPanels();
+    if (!wasVisible) {
+        m_displayPanelVisible = true;
+        int btnCenterY = m_menuBtns[5]->y() + m_menuBtns[5]->height() / 2;
+        int panelY = y() + btnCenterY - m_displayPanel->sizeHint().height() / 2;
+        m_displayPanel->move(x() + width(), std::max(0, panelY));
+        m_displayPanel->raise();
+        m_displayPanel->show();
+        m_menuBtns[5]->setStyleSheet(kMenuBtnActive);
+    }
 }
 
 bool SpectrumOverlayMenu::eventFilter(QObject* obj, QEvent* event)
