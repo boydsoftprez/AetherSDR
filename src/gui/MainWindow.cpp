@@ -12,6 +12,7 @@
 #include "PhoneCwApplet.h"
 #include "PhoneApplet.h"
 #include "EqApplet.h"
+#include "CatApplet.h"
 #include "RadioSetupDialog.h"
 #include "NetworkDiagnosticsDialog.h"
 #include "MemoryDialog.h"
@@ -67,6 +68,9 @@ MainWindow::MainWindow(QWidget* parent)
             sizes[0] = 260;
         }
         m_splitter->setSizes(sizes);
+        auto& ss = AppSettings::instance();
+        ss.setValue("ConnPanelCollapsed", collapsed ? "True" : "False");
+        ss.save();
     });
 
     connect(&m_discovery, &RadioDiscovery::radioDiscovered,
@@ -304,6 +308,13 @@ MainWindow::MainWindow(QWidget* parent)
     // ── EQ applet: graphic equalizer ─────────────────────────────────────────
     m_appletPanel->eqApplet()->setEqualizerModel(m_radioModel.equalizerModel());
 
+    // ── CAT applet: rigctld + PTY ──────────────────────────────────────────────
+    m_appletPanel->catApplet()->setRadioModel(&m_radioModel);
+    m_appletPanel->catApplet()->setRigctlServer(&m_rigctlServer);
+    m_appletPanel->catApplet()->setRigctlPty(&m_rigctlPty);
+    m_appletPanel->catApplet()->setAudioEngine(&m_audio);
+    // DAX audio channels deferred — needs PipeWire virtual devices (issue #15)
+
     // ── Status bar telemetry ──────────────────────────────────────────────────
     connect(&m_radioModel, &RadioModel::networkQualityChanged,
             this, [this](const QString& quality, int pingMs) {
@@ -369,6 +380,10 @@ MainWindow::MainWindow(QWidget* parent)
     const QString splitB64 = s.value("SplitterState").toString();
     if (!splitB64.isEmpty())
         m_splitter->restoreState(QByteArray::fromBase64(splitB64.toLatin1()));
+
+    // Restore connection panel state
+    if (s.value("ConnPanelCollapsed", "False").toString() == "True")
+        m_connPanel->setCollapsed(true);
 }
 
 MainWindow::~MainWindow() = default;
@@ -379,6 +394,7 @@ void MainWindow::closeEvent(QCloseEvent* event)
     s.setValue("MainWindowGeometry", saveGeometry().toBase64());
     s.setValue("MainWindowState",   saveState().toBase64());
     s.setValue("SplitterState",     m_splitter->saveState().toBase64());
+    s.setValue("ConnPanelCollapsed", m_connPanel->isCollapsed() ? "True" : "False");
     s.save();
     m_discovery.stopListening();
     m_radioModel.disconnectFromRadio();
@@ -432,12 +448,41 @@ void MainWindow::buildMenuBar()
 
     settingsMenu->addSeparator();
 
-    settingsMenu->addAction("Autostart CAT with SmartSDR");
-    settingsMenu->addAction("Autostart DAX with SmartSDR");
+    auto* autoRigctlAction = settingsMenu->addAction("Autostart rigctld with AetherSDR");
+    autoRigctlAction->setCheckable(true);
+    autoRigctlAction->setChecked(
+        AppSettings::instance().value("AutoStartRigctld", "False").toString() == "True");
+    connect(autoRigctlAction, &QAction::toggled, this, [](bool on) {
+        auto& s = AppSettings::instance();
+        s.setValue("AutoStartRigctld", on ? "True" : "False");
+        s.save();
+    });
+
+    auto* autoCatAction = settingsMenu->addAction("Autostart CAT with AetherSDR");
+    autoCatAction->setCheckable(true);
+    autoCatAction->setChecked(
+        AppSettings::instance().value("AutoStartCAT", "False").toString() == "True");
+    connect(autoCatAction, &QAction::toggled, this, [](bool on) {
+        auto& s = AppSettings::instance();
+        s.setValue("AutoStartCAT", on ? "True" : "False");
+        s.save();
+    });
+
+    auto* autoDaxAction = settingsMenu->addAction("Autostart DAX with AetherSDR");
+    autoDaxAction->setCheckable(true);
+    autoDaxAction->setChecked(
+        AppSettings::instance().value("AutoStartDAX", "False").toString() == "True");
+    connect(autoDaxAction, &QAction::toggled, this, [](bool on) {
+        auto& s = AppSettings::instance();
+        s.setValue("AutoStartDAX", on ? "True" : "False");
+        s.save();
+    });
 
     // Connect placeholder items to show "not implemented" message
     for (auto* action : settingsMenu->actions()) {
-        if (!action->isSeparator() && action != radioSetup && action != chooseRadio) {
+        if (!action->isSeparator() && action != radioSetup && action != chooseRadio
+            && action != networkAction && action != memoryAction && action != spotsAction
+            && action != autoRigctlAction && action != autoCatAction && action != autoDaxAction) {
             connect(action, &QAction::triggered, this, [this, action] {
                 statusBar()->showMessage(action->text().remove("...") + " — not yet implemented", 3000);
             });
@@ -637,6 +682,29 @@ void MainWindow::onConnectionStateChanged(bool connected)
         // Auto-collapse the connection panel unless the user manually expanded it
         if (!m_userExpandedPanel)
             m_connPanel->setCollapsed(true);
+
+        // Auto-start rigctld TCP server if enabled
+        auto& as = AppSettings::instance();
+        if (as.value("AutoStartRigctld", "False").toString() == "True") {
+            const int port = as.value("CatTcpPort", "4532").toInt();
+            if (!m_rigctlServer.isRunning()) {
+                m_rigctlServer.start(static_cast<quint16>(port));
+                qDebug() << "AutoStart: rigctld started on port" << port;
+                // Sync the CatApplet Enable button
+                if (m_appletPanel && m_appletPanel->catApplet())
+                    m_appletPanel->catApplet()->setTcpEnabled(true);
+            }
+        }
+        // Auto-start CAT virtual serial port if enabled
+        if (as.value("AutoStartCAT", "False").toString() == "True") {
+            if (!m_rigctlPty.isRunning()) {
+                m_rigctlPty.start();
+                qDebug() << "AutoStart: PTY started";
+                // Sync the CatApplet Enable button
+                if (m_appletPanel && m_appletPanel->catApplet())
+                    m_appletPanel->catApplet()->setPtyEnabled(true);
+            }
+        }
     } else {
         m_connStatusLabel->setText("Disconnected");
         m_radioInfoLabel->setText("");
@@ -670,6 +738,8 @@ void MainWindow::onSliceAdded(SliceModel* s)
         // Detect initial band from radio's frequency
         if (m_bandSettings.currentBand().isEmpty())
             m_bandSettings.setCurrentBand(BandSettings::bandForFrequency(s->frequency()));
+
+        // Band persistence is deprecated (issue #9) — radio state is source of truth
     }
 
     // Forward slice frequency/mode changes → spectrum

@@ -32,6 +32,9 @@ set(CORE_SOURCES
     src/core/CommandParser.cpp
     src/core/AudioEngine.cpp
     src/core/PanadapterStream.cpp
+    src/core/RigctlProtocol.cpp
+    src/core/RigctlPty.cpp
+    src/core/RigctlServer.cpp
 )
 
 set(MODEL_SOURCES
@@ -63,6 +66,7 @@ set(GUI_SOURCES
     src/gui/PhoneCwApplet.cpp
     src/gui/PhoneApplet.cpp
     src/gui/EqApplet.cpp
+    src/gui/CatApplet.cpp
 )
 
 set(ALL_SOURCES
@@ -108,6 +112,7 @@ target_compile_options(AetherSDR PRIVATE
 target_link_options(AetherSDR PRIVATE
     $<$<CONFIG:Debug>:-fsanitize=address>
 )
+
 
 # ── Install rules ────────────────────────────────────────────────────────────
 include(GNUInstallDirs)

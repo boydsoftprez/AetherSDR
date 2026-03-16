@@ -4,6 +4,8 @@
 #include "models/BandSettings.h"
 #include "core/RadioDiscovery.h"
 #include "core/AudioEngine.h"
+#include "core/RigctlServer.h"
+#include "core/RigctlPty.h"
 
 #include <QMainWindow>
 #include <QSplitter>
@@ -47,10 +49,12 @@ private:
     void restoreBandState(const BandSnapshot& snap);
 
     // Core objects
-    RadioDiscovery m_discovery;
-    RadioModel     m_radioModel;
-    AudioEngine    m_audio;
-    BandSettings   m_bandSettings;
+    RadioDiscovery    m_discovery;
+    RadioModel        m_radioModel;
+    AudioEngine       m_audio;
+    BandSettings      m_bandSettings;
+    RigctlServer      m_rigctlServer{&m_radioModel};
+    RigctlPty         m_rigctlPty{&m_radioModel};
 
     // GUI — left sidebar
     ConnectionPanel* m_connPanel{nullptr};
