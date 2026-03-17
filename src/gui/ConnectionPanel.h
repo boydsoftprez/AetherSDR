@@ -23,6 +23,7 @@ public:
     void setConnected(bool connected);
     void setStatusText(const QString& text);
     void setCollapsed(bool collapsed);
+    void probeRadio(const QString& ip);
     bool isCollapsed() const { return m_collapsed; }
 
 protected:
@@ -41,6 +42,7 @@ signals:
     void wanConnectRequested(const WanRadioInfo& radio);
     void disconnectRequested();
     void collapsedChanged(bool collapsed);
+    void routedRadioFound(const RadioInfo& radio);
     void smartLinkLoginRequested(const QString& email, const QString& password);
 
 private slots:
@@ -75,7 +77,6 @@ private:
     QWidget*     m_manualGroup{nullptr};
     QLineEdit*   m_manualIpEdit{nullptr};
     QPushButton* m_manualProbeBtn{nullptr};
-    void probeRadio(const QString& ip);
 };
 
 } // namespace AetherSDR

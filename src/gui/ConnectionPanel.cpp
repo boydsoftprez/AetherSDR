@@ -353,16 +353,16 @@ void ConnectionPanel::probeRadio(const QString& ip)
 
     connect(sock, &QTcpSocket::connected, this, [this, sock, ip] {
         // Connected — read V/H lines, then disconnect
-        connect(sock, &QTcpSocket::readyRead, this, [this, sock, ip] {
-            static QByteArray buf;
-            buf.append(sock->readAll());
+        auto* buf = new QByteArray;
+        connect(sock, &QTcpSocket::readyRead, this, [this, sock, ip, buf] {
+            buf->append(sock->readAll());
 
             // We need V<version>\n and H<handle>\n
             QString version;
-            while (buf.contains('\n')) {
-                int idx = buf.indexOf('\n');
-                QString line = QString::fromUtf8(buf.left(idx)).trimmed();
-                buf.remove(0, idx + 1);
+            while (buf->contains('\n')) {
+                int idx = buf->indexOf('\n');
+                QString line = QString::fromUtf8(buf->left(idx)).trimmed();
+                buf->remove(0, idx + 1);
 
                 if (line.startsWith('V'))
                     version = line.mid(1);
@@ -370,7 +370,7 @@ void ConnectionPanel::probeRadio(const QString& ip)
                     // Got both V and H — we have enough info
                     sock->disconnectFromHost();
                     sock->deleteLater();
-                    buf.clear();
+                    delete buf;
 
                     // Build a RadioInfo for this routed radio
                     RadioInfo info;
@@ -389,7 +389,8 @@ void ConnectionPanel::probeRadio(const QString& ip)
                             m_radios[i] = info;
                             m_radioList->item(i)->setText(info.displayName());
                             m_manualProbeBtn->setEnabled(true);
-                            m_manualProbeBtn->setText("Connect");
+                            m_manualProbeBtn->setText("Go");
+                            emit routedRadioFound(info);
                             return;
                         }
                     }
@@ -398,7 +399,8 @@ void ConnectionPanel::probeRadio(const QString& ip)
                     m_radioList->addItem(info.displayName());
 
                     m_manualProbeBtn->setEnabled(true);
-                    m_manualProbeBtn->setText("Connect");
+                    m_manualProbeBtn->setText("Go");
+                    emit routedRadioFound(info);
 
                     qDebug() << "ConnectionPanel: routed radio found at" << ip
                              << "version:" << version;

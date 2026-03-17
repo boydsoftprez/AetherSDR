@@ -88,6 +88,11 @@ MainWindow::MainWindow(QWidget* parent)
         m_radioModel.connectToRadio(info);
         auto& s = AppSettings::instance();
         s.setValue("LastConnectedRadioSerial", info.serial);
+        if (info.isRouted) {
+            s.setValue("LastRoutedRadioIp", info.address.toString());
+        } else {
+            s.remove("LastRoutedRadioIp");
+        }
         s.save();
     });
 
@@ -109,6 +114,7 @@ MainWindow::MainWindow(QWidget* parent)
         m_userDisconnected = true;
         auto& s = AppSettings::instance();
         s.remove("LastConnectedRadioSerial");
+        s.remove("LastRoutedRadioIp");
         s.save();
         m_radioModel.disconnectFromRadio();
     });
@@ -478,6 +484,30 @@ MainWindow::MainWindow(QWidget* parent)
 
     // Start discovery
     m_discovery.startListening();
+
+    // Auto-connect to routed radios (probed, not broadcast-discovered)
+    connect(m_connPanel, &ConnectionPanel::routedRadioFound,
+            this, [this](const RadioInfo& info) {
+        if (m_userDisconnected || m_radioModel.isConnected()) return;
+        const QString lastSerial = AppSettings::instance()
+            .value("LastConnectedRadioSerial").toString();
+        if (!lastSerial.isEmpty() && info.serial == lastSerial) {
+            qDebug() << "Auto-connecting to routed radio" << info.address.toString();
+            m_connPanel->setStatusText("Auto-connecting…");
+            m_radioModel.connectToRadio(info);
+        }
+    });
+
+    // Probe saved routed radio on startup
+    {
+        auto& s = AppSettings::instance();
+        const QString routedIp = s.value("LastRoutedRadioIp").toString();
+        if (!routedIp.isEmpty() && !m_userDisconnected) {
+            QTimer::singleShot(500, this, [this, routedIp] {
+                m_connPanel->probeRadio(routedIp);
+            });
+        }
+    }
 
     // Restore saved geometry from XML settings
     auto& s = AppSettings::instance();
