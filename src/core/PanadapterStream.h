@@ -149,7 +149,7 @@ private:
     float           m_maxDbm{-20.0f};
     RadioConnection* m_conn{nullptr};
     FrameAssembler  m_frame;
-    QMap<quint16, StreamStats> m_streamStats;  // keyed by PCC
+    QMap<quint32, StreamStats> m_streamStats;  // keyed by stream ID
 
 public:
     // Packet error/total counts across all streams (for network quality monitor).

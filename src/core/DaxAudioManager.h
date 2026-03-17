@@ -51,6 +51,11 @@ signals:
     void channelStateChanged(int channel, bool active);
     void txStateChanged(bool active);
 
+    // RMS level for DAX RX channel (0.0–1.0), emitted per audio packet.
+    void daxRxLevel(int channel, float rms);
+    // RMS level for DAX TX (0.0–1.0).
+    void daxTxLevel(float rms);
+
 private:
     struct Impl;
     std::unique_ptr<Impl> m_impl;

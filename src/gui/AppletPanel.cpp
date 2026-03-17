@@ -54,12 +54,13 @@ AppletPanel::AppletPanel(QWidget* parent) : QWidget(parent)
     btnRow->setStyleSheet(
         "QWidget { background: #0a0a18; border-bottom: 1px solid #1e2e3e; }"
         "QPushButton { background: #1a2a3a; border: 1px solid #203040; "
-        "border-radius: 3px; padding: 2px 5px; font-size: 11px; color: #c8d8e8; }"
+        "border-radius: 3px; padding: 2px 2px; font-size: 10px; color: #c8d8e8; }"
         "QPushButton:checked { background: #0070c0; color: #ffffff; "
         "border: 1px solid #0090e0; }");
     auto* btnLayout = new QHBoxLayout(btnRow);
-    btnLayout->setContentsMargins(3, 3, 3, 3);
+    btnLayout->setContentsMargins(3, 0, 3, 3);
     btnLayout->setSpacing(2);
+    btnLayout->setAlignment(Qt::AlignTop);
     root->addWidget(btnRow);
 
     // ── S-Meter section (with title bar, toggled by ANLG button) ─────────────
@@ -197,9 +198,7 @@ AppletPanel::AppletPanel(QWidget* parent) : QWidget(parent)
     addApplet("EQ", m_eqApplet, true);
 
     m_catApplet = new CatApplet;
-    addApplet("CAT", m_catApplet, false);
-
-    btnLayout->addStretch();
+    addApplet("C/DX", m_catApplet, false);
 }
 
 void AppletPanel::setTunerVisible(bool visible)

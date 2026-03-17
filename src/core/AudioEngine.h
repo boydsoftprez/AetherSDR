@@ -54,6 +54,12 @@ public slots:
     // Receives stripped PCM from PanadapterStream::audioDataReady().
     void feedAudioData(const QByteArray& pcm);
 
+    // Feed DAX TX audio (float32 stereo LE) directly for VITA-49 encoding.
+    void feedDaxTxData(const QByteArray& float32Stereo);
+
+    // Mute/unmute mic capture (stops sending mic audio, keeps socket open for DAX TX)
+    void setMicMuted(bool muted) { m_micMuted = muted; }
+
 signals:
     void rxStarted();
     void rxStopped();
@@ -79,6 +85,7 @@ private:
     quint16       m_txPort{0};
     quint32       m_txStreamId{0};
     quint8        m_txPacketCount{0};    // 4-bit, mod 16
+    bool          m_micMuted{false};     // true when DAX TX active (suppress mic)
     QByteArray    m_txAccumulator;       // accumulate PCM until 128 stereo pairs
 
     float m_rxVolume{1.0f};

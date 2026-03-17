@@ -8,6 +8,7 @@ class QLabel;
 class QLineEdit;
 class QComboBox;
 class QSlider;
+class QProgressBar;
 
 namespace AetherSDR {
 
@@ -71,8 +72,10 @@ private:
     QPushButton* m_daxEnable{nullptr};
     std::array<QLabel*, 4> m_daxStatus{};
     std::array<QLabel*, 4> m_daxIndicator{};
-    QLabel*      m_daxTxStatus{nullptr};
-    QLabel*      m_daxTxIndicator{nullptr};
+    std::array<QProgressBar*, 4> m_daxLevel{};
+    QLabel*        m_daxTxStatus{nullptr};
+    QLabel*        m_daxTxIndicator{nullptr};
+    QProgressBar*  m_daxTxLevel{nullptr};
 };
 
 } // namespace AetherSDR

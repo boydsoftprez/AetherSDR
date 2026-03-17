@@ -350,22 +350,6 @@ QString RigctlProtocol::cmdDumpState()
     dump += "0x0\n";
     dump += "0x0\n";
     dump += "0x0\n";
-    // Protocol v1 additional fields (required by netrigctl_open)
-    dump += "0\n";                       // vfo_ops
-    dump += "0\n";                       // ptt_type (RIG_PTT_NONE)
-    dump += "0\n";                       // targetable_vfo
-    dump += "1\n";                       // has_set_vfo
-    dump += "1\n";                       // has_get_vfo
-    dump += "1\n";                       // has_set_freq
-    dump += "1\n";                       // has_get_freq
-    dump += "0\n";                       // has_set_conf
-    dump += "0\n";                       // has_get_conf
-    dump += "0\n";                       // has_get_ant (no antenna control via rigctld)
-    dump += "0\n";                       // has_set_ant
-    dump += "0\n";                       // has_power2mW
-    dump += "0\n";                       // has_mW2power
-    dump += "0\n";                       // timeout (ms, 0 = default)
-    dump += "done\n";                    // terminates the v1 extended fields
 
     return dump;
 }

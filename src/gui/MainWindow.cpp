@@ -346,10 +346,25 @@ MainWindow::MainWindow(QWidget* parent)
     connect(m_radioModel.panStream(), &PanadapterStream::daxAudioReady,
             &m_daxManager, &DaxAudioManager::feedDaxRx);
 
+    // Route DAX TX audio from PipeWire virtual sink → radio
+    connect(&m_daxManager, &DaxAudioManager::daxTxDataReady,
+            this, [this]() {
+        // Read float32 stereo from the DAX TX ringbuffer and send as VITA-49
+        QByteArray data = m_daxManager.readDaxTx(128 * 2 * sizeof(float));
+        if (!data.isEmpty()) {
+            m_audio.feedDaxTxData(data);
+            static int count = 0;
+            if (++count % 100 == 1)
+                qDebug() << "DAX TX: forwarded" << data.size() << "bytes to radio (packet" << count << ")";
+        }
+    });
+
     // DAX enable/disable from CatApplet
     connect(m_appletPanel->catApplet(), &CatApplet::daxEnableChanged,
             this, [this](bool on) {
         if (on) {
+            // Stop mic capture — DAX TX replaces it
+            m_audio.setMicMuted(true);
             // Activate TX virtual sink
             m_daxManager.activateTx();
             // Activate RX channels for any slices that have DAX assigned
@@ -365,6 +380,8 @@ MainWindow::MainWindow(QWidget* parent)
                 m_daxManager.deactivateRxChannel(ch);
             }
             m_daxManager.deactivateTx();
+            // Restart mic capture
+            m_audio.setMicMuted(false);
         }
     });
     // DAX audio channels deferred — needs PipeWire virtual devices (issue #15)
@@ -805,6 +822,28 @@ void MainWindow::onSliceAdded(SliceModel* s)
         m_updatingFromModel = false;
     });
     connect(s, &SliceModel::filterChanged, spectrum(), &SpectrumWidget::setVfoFilter);
+
+    // DAX channel assignment → update CatApplet status
+    connect(s, &SliceModel::daxChannelChanged, this, [this, s](int ch) {
+        static const char letters[] = "ABCDEFGH";
+        const int id = s->sliceId();
+        const QString letter = (id >= 0 && id < 8) ? QString(letters[id]) : "?";
+        if (ch > 0)
+            m_appletPanel->catApplet()->setDaxSliceAssignment(ch, letter);
+        else {
+            // Cleared — find which channel this slice was on and clear it
+            for (int c = 1; c <= 4; ++c)
+                m_appletPanel->catApplet()->setDaxSliceAssignment(c, "");
+        }
+    });
+
+    // Set initial DAX assignment if already set
+    if (s->daxChannel() > 0) {
+        static const char letters[] = "ABCDEFGH";
+        const int id = s->sliceId();
+        const QString letter = (id >= 0 && id < 8) ? QString(letters[id]) : "?";
+        m_appletPanel->catApplet()->setDaxSliceAssignment(s->daxChannel(), letter);
+    }
 
     // Update filter limits when mode changes (per FlexLib Slice.cs)
     auto updateFilterLimits = [this](const QString& mode) {

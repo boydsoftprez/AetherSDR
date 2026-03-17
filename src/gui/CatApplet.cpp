@@ -3,12 +3,14 @@
 #include "core/RigctlPty.h"
 #include "core/AudioEngine.h"
 #include "core/DaxAudioManager.h"
+#include "models/TransmitModel.h"
 #include "ComboStyle.h"
 #include "models/RadioModel.h"
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QProgressBar>
 #include <QPushButton>
 #include <QLineEdit>
 #include <QCheckBox>
@@ -240,8 +242,8 @@ void CatApplet::buildUI()
     m_daxEnable->setCheckable(true);
     m_daxEnable->setStyleSheet(kGreenToggle);
     m_daxEnable->setFixedSize(60, 22);
-    daxEnableRow->addWidget(m_daxEnable);
     daxEnableRow->addStretch();
+    daxEnableRow->addWidget(m_daxEnable);
     daxRoot->addLayout(daxEnableRow);
 
     // DAX channel status rows (1-4)
@@ -255,7 +257,19 @@ void CatApplet::buildUI()
 
         m_daxStatus[i] = new QLabel("—");
         m_daxStatus[i]->setStyleSheet("QLabel { color: #506070; font-size: 10px; }");
-        row->addWidget(m_daxStatus[i], 1);
+        m_daxStatus[i]->setFixedWidth(40);
+        row->addWidget(m_daxStatus[i]);
+
+        m_daxLevel[i] = new QProgressBar;
+        m_daxLevel[i]->setRange(0, 100);
+        m_daxLevel[i]->setValue(0);
+        m_daxLevel[i]->setTextVisible(false);
+        m_daxLevel[i]->setFixedHeight(8);
+        m_daxLevel[i]->setStyleSheet(
+            "QProgressBar { background: #0a0a18; border: 1px solid #1e2e3e;"
+            " border-radius: 3px; }"
+            "QProgressBar::chunk { background: #00b4d8; border-radius: 2px; }");
+        row->addWidget(m_daxLevel[i], 1);
 
         m_daxIndicator[i] = new QLabel;
         m_daxIndicator[i]->setFixedSize(8, 8);
@@ -276,7 +290,19 @@ void CatApplet::buildUI()
 
         m_daxTxStatus = new QLabel("—");
         m_daxTxStatus->setStyleSheet("QLabel { color: #506070; font-size: 10px; }");
-        row->addWidget(m_daxTxStatus, 1);
+        m_daxTxStatus->setFixedWidth(40);
+        row->addWidget(m_daxTxStatus);
+
+        m_daxTxLevel = new QProgressBar;
+        m_daxTxLevel->setRange(0, 100);
+        m_daxTxLevel->setValue(0);
+        m_daxTxLevel->setTextVisible(false);
+        m_daxTxLevel->setFixedHeight(8);
+        m_daxTxLevel->setStyleSheet(
+            "QProgressBar { background: #0a0a18; border: 1px solid #1e2e3e;"
+            " border-radius: 3px; }"
+            "QProgressBar::chunk { background: #00b4d8; border-radius: 2px; }");
+        row->addWidget(m_daxTxLevel, 1);
 
         m_daxTxIndicator = new QLabel;
         m_daxTxIndicator->setFixedSize(8, 8);
@@ -395,6 +421,35 @@ void CatApplet::setDaxManager(DaxAudioManager* dax)
                 this, &CatApplet::updateDaxChannelStatus);
         connect(dax, &DaxAudioManager::txStateChanged,
                 this, &CatApplet::updateDaxTxStatus);
+        connect(dax, &DaxAudioManager::daxRxLevel,
+                this, [this](int channel, float rms) {
+            if (channel >= 1 && channel <= 4)
+                m_daxLevel[channel - 1]->setValue(static_cast<int>(rms * 100));
+        });
+        connect(dax, &DaxAudioManager::daxTxLevel,
+                this, [this](float rms) {
+            m_daxTxLevel->setValue(static_cast<int>(rms * 100));
+        });
+
+        // Show TX slice name when actively transmitting
+        if (m_model) {
+            connect(m_model->transmitModel(), &TransmitModel::moxChanged,
+                    this, [this](bool mox) {
+                if (!m_daxManager || !m_daxManager->isTxActive()) return;
+                if (mox && m_model) {
+                    static const char letters[] = "ABCDEFGH";
+                    for (auto* s : m_model->slices()) {
+                        if (s->isTxSlice() && s->sliceId() < 8) {
+                            m_daxTxStatus->setText(QString("Slice %1").arg(letters[s->sliceId()]));
+                            return;
+                        }
+                    }
+                    m_daxTxStatus->setText("TX");
+                } else {
+                    m_daxTxStatus->setText("Ready");
+                }
+            });
+        }
     }
 }
 
@@ -411,7 +466,11 @@ void CatApplet::updateDaxTxStatus(bool active)
     m_daxTxIndicator->setStyleSheet(
         active ? "QLabel { background: #00cc44; border-radius: 4px; }"
                : "QLabel { background: #304050; border-radius: 4px; }");
-    m_daxTxStatus->setText(active ? "Active" : "—");
+    if (!active) {
+        m_daxTxStatus->setText("—");
+        return;
+    }
+    m_daxTxStatus->setText("Ready");
 }
 
 void CatApplet::setDaxSliceAssignment(int channel, const QString& sliceLetter)

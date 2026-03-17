@@ -9,6 +9,8 @@
 
 #include <QDebug>
 #include <QMetaObject>
+#include <QProcess>
+#include <QTimer>
 
 #include <array>
 #include <thread>
@@ -29,6 +31,8 @@ struct RxChannel {
     SpscRingBuffer ring{RING_SIZE};
     std::atomic<bool> active{false};
     int            channel{0};  // 1-based
+    uint32_t       moduleId{0}; // PulseAudio module ID for cleanup
+    QString        sinkName;    // e.g. "aethersdr_dax_1"
 };
 
 struct TxChannel {
@@ -37,6 +41,7 @@ struct TxChannel {
     SpscRingBuffer ring{RING_SIZE};
     std::atomic<bool> active{false};
     DaxAudioManager* manager{nullptr};  // for signal emission
+    uint32_t       moduleId{0};
 };
 
 // ─── PipeWire callbacks (RT context) ─────────────────────────────────────────
@@ -123,6 +128,81 @@ struct DaxAudioManager::Impl {
         info.position[0] = SPA_AUDIO_CHANNEL_FL;
         info.position[1] = SPA_AUDIO_CHANNEL_FR;
         return spa_format_audio_raw_build(&b, SPA_PARAM_EnumFormat, &info);
+    }
+
+    // Create a pw_stream on the PipeWire thread (required by PW API)
+    struct CreateStreamArgs {
+        Impl* impl;
+        RxChannel* rxCh;      // non-null for RX
+        TxChannel* txCh;      // non-null for TX
+        QString targetName;
+        QString nodeName;
+        bool isInput;          // PW_DIRECTION_INPUT for TX capture
+    };
+
+    static int createStreamOnPwThread(struct spa_loop*, bool, uint32_t,
+                                       const void*, size_t, void* data)
+    {
+        auto* args = static_cast<CreateStreamArgs*>(data);
+        auto* impl = args->impl;
+
+        pw_properties* props;
+        if (args->targetName.isEmpty()) {
+            props = pw_properties_new(
+                PW_KEY_MEDIA_TYPE,     "Audio",
+                PW_KEY_MEDIA_CATEGORY, args->isInput ? "Capture" : "Playback",
+                PW_KEY_MEDIA_ROLE,     "Communication",
+                PW_KEY_NODE_NAME,      args->nodeName.toUtf8().constData(),
+                nullptr);
+        } else {
+            props = pw_properties_new(
+                PW_KEY_MEDIA_TYPE,     "Audio",
+                PW_KEY_MEDIA_CATEGORY, args->isInput ? "Capture" : "Playback",
+                PW_KEY_MEDIA_ROLE,     "Communication",
+                PW_KEY_NODE_NAME,      args->nodeName.toUtf8().constData(),
+                PW_KEY_TARGET_OBJECT,  args->targetName.toUtf8().constData(),
+                nullptr);
+        }
+
+        pw_stream* stream = pw_stream_new(impl->core,
+            args->nodeName.toUtf8().constData(), props);
+        if (!stream) {
+            delete args;
+            return 0;
+        }
+
+        if (args->rxCh) {
+            args->rxCh->stream = stream;
+            pw_stream_add_listener(stream, &args->rxCh->listener, &rxStreamEvents, args->rxCh);
+        } else {
+            args->txCh->stream = stream;
+            pw_stream_add_listener(stream, &args->txCh->listener, &txStreamEvents, args->txCh);
+        }
+
+        uint8_t buffer[1024];
+        spa_pod_builder b = SPA_POD_BUILDER_INIT(buffer, sizeof(buffer));
+        const spa_pod* params[1] = { impl->buildAudioFormat(b) };
+
+        auto flags = PW_STREAM_FLAG_MAP_BUFFERS | PW_STREAM_FLAG_RT_PROCESS;
+        if (!args->targetName.isEmpty())
+            flags |= PW_STREAM_FLAG_AUTOCONNECT;
+
+        pw_stream_connect(stream,
+            args->isInput ? PW_DIRECTION_INPUT : PW_DIRECTION_OUTPUT,
+            PW_ID_ANY,
+            static_cast<pw_stream_flags>(flags),
+            params, 1);
+
+        delete args;
+        return 0;
+    }
+
+    static int destroyStreamOnPwThread(struct spa_loop*, bool, uint32_t,
+                                        const void*, size_t, void* data)
+    {
+        auto* stream = static_cast<pw_stream*>(data);
+        if (stream) pw_stream_destroy(stream);
+        return 0;
     }
 };
 
@@ -224,32 +304,48 @@ void DaxAudioManager::feedDaxRx(int channel, const QByteArray& pcm)
     auto& ch = m_impl->rx[channel - 1];
     if (!ch.active) return;
 
-    // Convert int16 stereo LE → float32 stereo
+    // Convert int16 stereo LE → float32 stereo (PipeWire handles 24k↔48k resampling)
     const auto* src = reinterpret_cast<const int16_t*>(pcm.constData());
-    const int samplePairs = pcm.size() / (sizeof(int16_t) * CHANNELS);
-    const int floatBytes = samplePairs * CHANNELS * sizeof(float);
+    const int totalSamples = pcm.size() / sizeof(int16_t);
 
-    // Stack buffer for conversion (typical packet is ~240 stereo pairs = 1920 bytes float)
     float buf[2048];
-    int remaining = samplePairs * CHANNELS;
+    float sumSq = 0.0f;
+    int remaining = totalSamples;
     int srcIdx = 0;
 
     while (remaining > 0) {
         const int chunk = std::min(remaining, 2048);
-        for (int i = 0; i < chunk; ++i)
+        for (int i = 0; i < chunk; ++i) {
             buf[i] = src[srcIdx + i] / 32768.0f;
+            sumSq += buf[i] * buf[i];
+        }
         ch.ring.write(buf, chunk * sizeof(float));
         srcIdx += chunk;
         remaining -= chunk;
     }
+
+    if (totalSamples > 0)
+        emit daxRxLevel(channel, std::min(std::sqrt(sumSq / totalSamples), 1.0f));
 }
 
 QByteArray DaxAudioManager::readDaxTx(int maxBytes)
 {
     if (!m_impl->tx.active) return {};
+
+    // PipeWire delivers audio at 24 kHz (our stream's native rate, resampled from 48k sink)
     QByteArray out(maxBytes, Qt::Uninitialized);
     const int bytesRead = m_impl->tx.ring.read(out.data(), maxBytes);
     out.resize(bytesRead);
+
+    if (bytesRead > 0) {
+        const auto* samples = reinterpret_cast<const float*>(out.constData());
+        const int n = bytesRead / sizeof(float);
+        float sumSq = 0.0f;
+        for (int i = 0; i < n; ++i)
+            sumSq += samples[i] * samples[i];
+        emit daxTxLevel(std::min(std::sqrt(sumSq / n), 1.0f));
+    }
+
     return out;
 }
 
@@ -260,41 +356,41 @@ void DaxAudioManager::activateRxChannel(int channel)
     if (ch.active) return;
     if (!m_impl->loop) return;
 
-    const auto name = QString("aethersdr_dax_%1").arg(channel);
-    const auto desc = QString("AetherSDR DAX %1").arg(channel);
+    const auto sinkName = (channel == 1) ? QString("AetherSDR-Input")
+                                         : QString("AetherSDR-Input-%1").arg(channel);
+    const auto desc = (channel == 1) ? QString("AetherSDR Input")
+                                     : QString("AetherSDR Input %1").arg(channel);
 
-    auto* props = pw_properties_new(
-        PW_KEY_MEDIA_TYPE,        "Audio",
-        PW_KEY_MEDIA_CATEGORY,    "Capture",
-        PW_KEY_MEDIA_ROLE,        "Communication",
-        PW_KEY_NODE_NAME,         name.toUtf8().constData(),
-        PW_KEY_NODE_DESCRIPTION,  desc.toUtf8().constData(),
-        nullptr);
-
-    ch.stream = pw_stream_new(m_impl->core, name.toUtf8().constData(), props);
-    if (!ch.stream) {
-        qWarning() << "DaxAudioManager: failed to create RX stream for channel" << channel;
+    // Create a PulseAudio null sink (works on both PulseAudio and PipeWire).
+    // Apps will see the .monitor source as an audio input (e.g., in WSJT-X Input dropdown).
+    QProcess pactl;
+    pactl.start("pactl", {"load-module", "module-null-sink",
+        QString("sink_name=%1").arg(sinkName),
+        QString("sink_properties=device.description=\"%1\"").arg(desc),
+        "rate=24000", "channels=2", "format=float32le"});
+    pactl.waitForFinished(3000);
+    if (pactl.exitCode() != 0) {
+        qWarning() << "DaxAudioManager: pactl failed for channel" << channel
+                   << pactl.readAllStandardError();
         return;
     }
+    ch.moduleId = pactl.readAllStandardOutput().trimmed().toUInt();
+    ch.sinkName = sinkName;
 
-    pw_stream_add_listener(ch.stream, &ch.listener, &rxStreamEvents, &ch);
-
-    uint8_t buffer[1024];
-    spa_pod_builder b = SPA_POD_BUILDER_INIT(buffer, sizeof(buffer));
-    const spa_pod* params[1] = { m_impl->buildAudioFormat(b) };
-
-    pw_stream_connect(ch.stream,
-        PW_DIRECTION_OUTPUT,
-        PW_ID_ANY,
-        static_cast<pw_stream_flags>(
-            PW_STREAM_FLAG_AUTOCONNECT |
-            PW_STREAM_FLAG_MAP_BUFFERS |
-            PW_STREAM_FLAG_RT_PROCESS),
-        params, 1);
+    // Create a PipeWire stream on the PW thread that feeds audio INTO the null sink.
+    auto* args = new Impl::CreateStreamArgs{
+        m_impl.get(), &ch, nullptr,
+        sinkName,
+        QString("%1_feed").arg(sinkName),
+        false  // OUTPUT direction
+    };
+    pw_loop_invoke(pw_main_loop_get_loop(m_impl->loop),
+                   Impl::createStreamOnPwThread, 0, nullptr, 0, false, args);
 
     ch.ring.reset();
     ch.active = true;
-    qDebug() << "DaxAudioManager: activated RX channel" << channel << "as" << desc;
+    qDebug() << "DaxAudioManager: activated RX channel" << channel
+             << "sink:" << sinkName << "moduleId:" << ch.moduleId;
     emit channelStateChanged(channel, true);
 }
 
@@ -304,9 +400,14 @@ void DaxAudioManager::deactivateRxChannel(int channel)
     auto& ch = m_impl->rx[channel - 1];
     if (!ch.active) return;
 
-    if (ch.stream) {
-        pw_stream_destroy(ch.stream);
+    if (ch.stream && m_impl->loop) {
+        pw_loop_invoke(pw_main_loop_get_loop(m_impl->loop),
+                       Impl::destroyStreamOnPwThread, 0, nullptr, 0, false, ch.stream);
         ch.stream = nullptr;
+    }
+    if (ch.moduleId > 0) {
+        QProcess::execute("pactl", {"unload-module", QString::number(ch.moduleId)});
+        ch.moduleId = 0;
     }
     ch.active = false;
     ch.ring.reset();
@@ -325,38 +426,46 @@ void DaxAudioManager::activateTx()
     if (m_impl->tx.active) return;
     if (!m_impl->loop) return;
 
-    auto* props = pw_properties_new(
-        PW_KEY_MEDIA_TYPE,        "Audio",
-        PW_KEY_MEDIA_CATEGORY,    "Playback",
-        PW_KEY_MEDIA_ROLE,        "Communication",
-        PW_KEY_NODE_NAME,         "aethersdr_dax_tx",
-        PW_KEY_NODE_DESCRIPTION,  "AetherSDR DAX TX",
-        nullptr);
-
-    m_impl->tx.stream = pw_stream_new(m_impl->core, "aethersdr_dax_tx", props);
-    if (!m_impl->tx.stream) {
-        qWarning() << "DaxAudioManager: failed to create TX stream";
+    // Create a PulseAudio null sink for TX — apps write audio to it,
+    // we read from its monitor source via PipeWire stream.
+    QProcess pactl;
+    pactl.start("pactl", {"load-module", "module-null-sink",
+        "sink_name=AetherSDR-Output",
+        "sink_properties=device.description=\"AetherSDR Output\"",
+        "rate=24000", "channels=2", "format=float32le"});
+    pactl.waitForFinished(3000);
+    if (pactl.exitCode() != 0) {
+        qWarning() << "DaxAudioManager: pactl failed for TX" << pactl.readAllStandardError();
         return;
     }
+    m_impl->tx.moduleId = pactl.readAllStandardOutput().trimmed().toUInt();
 
-    pw_stream_add_listener(m_impl->tx.stream, &m_impl->tx.listener, &txStreamEvents, &m_impl->tx);
+    // Don't use pw_stream for TX capture — instead, manually link
+    // the null sink's monitor to our capture stream after a short delay.
+    // Create the PW stream without AUTOCONNECT, then link manually.
+    auto* args = new Impl::CreateStreamArgs{
+        m_impl.get(), nullptr, &m_impl->tx,
+        "",  // no target — we'll link manually
+        "AetherSDR-Output_capture",
+        true  // INPUT direction (capture)
+    };
+    pw_loop_invoke(pw_main_loop_get_loop(m_impl->loop),
+                   Impl::createStreamOnPwThread, 0, nullptr, 0, false, args);
 
-    uint8_t buffer[1024];
-    spa_pod_builder b = SPA_POD_BUILDER_INIT(buffer, sizeof(buffer));
-    const spa_pod* params[1] = { m_impl->buildAudioFormat(b) };
-
-    pw_stream_connect(m_impl->tx.stream,
-        PW_DIRECTION_INPUT,
-        PW_ID_ANY,
-        static_cast<pw_stream_flags>(
-            PW_STREAM_FLAG_AUTOCONNECT |
-            PW_STREAM_FLAG_MAP_BUFFERS |
-            PW_STREAM_FLAG_RT_PROCESS),
-        params, 1);
+    // Give PipeWire a moment to register the stream, then link manually
+    QTimer::singleShot(500, this, [this]() {
+        // Disconnect any auto-connected links first
+        QProcess::execute("pw-link", {"-d", "AetherSDR:output_AUX0", "AetherSDR-Output_capture:input_FL"});
+        QProcess::execute("pw-link", {"-d", "AetherSDR:output_AUX1", "AetherSDR-Output_capture:input_FR"});
+        // Connect the null sink's monitor to our capture stream
+        QProcess::execute("pw-link", {"AetherSDR-Output:monitor_FL", "AetherSDR-Output_capture:input_FL"});
+        QProcess::execute("pw-link", {"AetherSDR-Output:monitor_FR", "AetherSDR-Output_capture:input_FR"});
+        qDebug() << "DaxAudioManager: manually linked AetherSDR-Output monitor → capture";
+    });
 
     m_impl->tx.ring.reset();
     m_impl->tx.active = true;
-    qDebug() << "DaxAudioManager: activated TX virtual sink";
+    qDebug() << "DaxAudioManager: activated TX sink, moduleId:" << m_impl->tx.moduleId;
     emit txStateChanged(true);
 }
 
@@ -364,9 +473,14 @@ void DaxAudioManager::deactivateTx()
 {
     if (!m_impl->tx.active) return;
 
-    if (m_impl->tx.stream) {
-        pw_stream_destroy(m_impl->tx.stream);
+    if (m_impl->tx.stream && m_impl->loop) {
+        pw_loop_invoke(pw_main_loop_get_loop(m_impl->loop),
+                       Impl::destroyStreamOnPwThread, 0, nullptr, 0, false, m_impl->tx.stream);
         m_impl->tx.stream = nullptr;
+    }
+    if (m_impl->tx.moduleId > 0) {
+        QProcess::execute("pactl", {"unload-module", QString::number(m_impl->tx.moduleId)});
+        m_impl->tx.moduleId = 0;
     }
     m_impl->tx.active = false;
     m_impl->tx.ring.reset();

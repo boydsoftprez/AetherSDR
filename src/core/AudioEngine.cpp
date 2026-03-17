@@ -154,7 +154,7 @@ void AudioEngine::stopTxStream()
 
 void AudioEngine::onTxAudioReady()
 {
-    if (!m_micDevice || m_txStreamId == 0) return;
+    if (!m_micDevice || m_txStreamId == 0 || m_micMuted) return;
 
     // Read all available PCM data (int16 stereo, 24 kHz)
     const QByteArray data = m_micDevice->readAll();
@@ -177,6 +177,23 @@ void AudioEngine::onTxAudioReady()
 
         // Advance accumulator
         m_txAccumulator.remove(0, TX_PCM_BYTES_PER_PACKET);
+    }
+}
+
+void AudioEngine::feedDaxTxData(const QByteArray& float32Stereo)
+{
+    if (m_txStreamId == 0) return;
+
+    m_txAccumulator.append(float32Stereo);
+
+    // TX_SAMPLES_PER_PACKET stereo pairs × 2 channels × 4 bytes = float packet size
+    static constexpr int FLOAT_BYTES_PER_PACKET = TX_SAMPLES_PER_PACKET * 2 * sizeof(float);
+
+    while (m_txAccumulator.size() >= FLOAT_BYTES_PER_PACKET) {
+        const auto* floatData = reinterpret_cast<const float*>(m_txAccumulator.constData());
+        QByteArray packet = buildVitaTxPacket(floatData, TX_SAMPLES_PER_PACKET);
+        m_txSocket.writeDatagram(packet, m_txAddress, m_txPort);
+        m_txAccumulator.remove(0, FLOAT_BYTES_PER_PACKET);
     }
 }
 

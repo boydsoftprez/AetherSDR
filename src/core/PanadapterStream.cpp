@@ -144,23 +144,24 @@ void PanadapterStream::processDatagram(const QByteArray& data)
                  << "trailer=" << hasTrailer;
     }
 
-    // Track packet sequence for network quality monitoring.
-    // VITA-49 packet count is a 4-bit field (bits 19:16 of word0).
-    const int seq = (word0 >> 16) & 0x0F;
-    auto& stats = m_streamStats[pcc];
-    stats.totalCount++;
-    if (stats.lastSeq >= 0) {
-        const int expected = (stats.lastSeq + 1) & 0x0F;
-        if (seq != expected)
-            stats.errorCount++;
-    }
-    stats.lastSeq = seq;
+    // Track packet sequence per stream ID (only for packets we process).
+    auto trackSeq = [&]() {
+        const int seq = (word0 >> 16) & 0x0F;
+        auto& stats = m_streamStats[streamId];
+        stats.totalCount++;
+        if (stats.lastSeq >= 0) {
+            const int expected = (stats.lastSeq + 1) & 0x0F;
+            if (seq != expected)
+                stats.errorCount++;
+        }
+        stats.lastSeq = seq;
+    };
 
     // Route by PacketClassCode
     switch (pcc) {
     case PCC_IF_NARROW:
+        trackSeq();
         decodeNarrowAudio(raw, data.size(), hasTrailer);
-        // Route decoded audio to DAX channel or speaker
         if (!m_pendingAudio.isEmpty()) {
             const int daxCh = m_daxStreamIds.value(streamId, 0);
             if (daxCh > 0)
@@ -171,6 +172,7 @@ void PanadapterStream::processDatagram(const QByteArray& data)
         }
         return;
     case PCC_IF_NARROW_REDUCED:
+        trackSeq();
         decodeReducedBwAudio(raw, data.size(), hasTrailer);
         if (!m_pendingAudio.isEmpty()) {
             const int daxCh = m_daxStreamIds.value(streamId, 0);
@@ -185,15 +187,18 @@ void PanadapterStream::processDatagram(const QByteArray& data)
         // Filter: only process FFT from our panadapter
         if (m_ownedPanStreamId != 0 && streamId != m_ownedPanStreamId)
             return;
+        trackSeq();
         decodeFFT(raw, data.size(), hasTrailer);
         return;
     case PCC_WATERFALL:
         // Filter: only process waterfall from our display
         if (m_ownedWfStreamId != 0 && streamId != m_ownedWfStreamId)
             return;
+        trackSeq();
         decodeWaterfallTile(raw, data.size(), hasTrailer);
         return;
     case PCC_METER:
+        trackSeq();
         decodeMeterData(raw, data.size(), hasTrailer);
         return;
     default:
