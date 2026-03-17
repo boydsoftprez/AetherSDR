@@ -400,8 +400,9 @@ void SpectrumWidget::mousePressEvent(QMouseEvent* ev)
         }
     }
 
-    // Right-click context menu
+    // Right-click context menu (cancel any active TNF drag first)
     if (ev->button() == Qt::RightButton && y < specH) {
+        m_draggingTnfId = -1;
         const int mx = static_cast<int>(ev->position().x());
         const double freqMhz = xToMhz(mx);
         const int hitTnf = tnfAtPixel(mx);
@@ -620,11 +621,17 @@ void SpectrumWidget::mouseMoveEvent(QMouseEvent* ev)
 void SpectrumWidget::mouseReleaseEvent(QMouseEvent* ev)
 {
     if (m_draggingTnfId >= 0) {
-        const int mx = static_cast<int>(ev->position().x());
-        const double newFreq = xToMhz(mx);
-        emit tnfMoveRequested(m_draggingTnfId, newFreq);
+        const int id = m_draggingTnfId;
         m_draggingTnfId = -1;
         setCursor(Qt::CrossCursor);
+        // Only emit move if the TNF still exists in our markers
+        bool exists = false;
+        for (const auto& t : m_tnfMarkers)
+            if (t.id == id) { exists = true; break; }
+        if (exists) {
+            const int mx = static_cast<int>(ev->position().x());
+            emit tnfMoveRequested(id, xToMhz(mx));
+        }
         ev->accept();
         return;
     }
