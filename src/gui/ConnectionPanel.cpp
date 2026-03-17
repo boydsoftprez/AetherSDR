@@ -93,6 +93,7 @@ ConnectionPanel::ConnectionPanel(QWidget* parent)
     // ── Manual (routed) connection ───────────────────────────────────────
     m_manualGroup = new QGroupBox("Manual Connection", this);
     auto* manBox = new QVBoxLayout(m_manualGroup);
+    manBox->setContentsMargins(4, 8, 4, 4);
     manBox->setSpacing(4);
 
     auto* manRow = new QHBoxLayout;
