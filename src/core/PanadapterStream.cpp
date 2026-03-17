@@ -160,9 +160,26 @@ void PanadapterStream::processDatagram(const QByteArray& data)
     switch (pcc) {
     case PCC_IF_NARROW:
         decodeNarrowAudio(raw, data.size(), hasTrailer);
+        // Route decoded audio to DAX channel or speaker
+        if (!m_pendingAudio.isEmpty()) {
+            const int daxCh = m_daxStreamIds.value(streamId, 0);
+            if (daxCh > 0)
+                emit daxAudioReady(daxCh, m_pendingAudio);
+            else
+                emit audioDataReady(m_pendingAudio);
+            m_pendingAudio.clear();
+        }
         return;
     case PCC_IF_NARROW_REDUCED:
         decodeReducedBwAudio(raw, data.size(), hasTrailer);
+        if (!m_pendingAudio.isEmpty()) {
+            const int daxCh = m_daxStreamIds.value(streamId, 0);
+            if (daxCh > 0)
+                emit daxAudioReady(daxCh, m_pendingAudio);
+            else
+                emit audioDataReady(m_pendingAudio);
+            m_pendingAudio.clear();
+        }
         return;
     case PCC_FFT:
         // Filter: only process FFT from our panadapter
@@ -360,7 +377,7 @@ void PanadapterStream::decodeNarrowAudio(const uchar* raw, int totalBytes, bool 
         dst[i] = static_cast<qint16>(qBound(-1.0f, f, 1.0f) * 32767.0f);
     }
 
-    emit audioDataReady(pcm);
+    m_pendingAudio = pcm;
 }
 
 void PanadapterStream::decodeReducedBwAudio(const uchar* raw, int totalBytes, bool hasTrailer)
@@ -382,7 +399,27 @@ void PanadapterStream::decodeReducedBwAudio(const uchar* raw, int totalBytes, bo
         dst[i * 2 + 1] = s;  // R
     }
 
-    emit audioDataReady(pcm);
+    m_pendingAudio = pcm;
+}
+
+// ─── DAX stream routing ──────────────────────────────────────────────────────
+
+void PanadapterStream::setDaxStreamId(int channel, quint32 streamId)
+{
+    m_daxStreamIds[streamId] = channel;
+    qDebug() << "PanadapterStream: DAX channel" << channel
+             << "-> stream 0x" + QString::number(streamId, 16);
+}
+
+void PanadapterStream::removeDaxStreamId(int channel)
+{
+    for (auto it = m_daxStreamIds.begin(); it != m_daxStreamIds.end(); ) {
+        if (it.value() == channel)
+            it = m_daxStreamIds.erase(it);
+        else
+            ++it;
+    }
+    qDebug() << "PanadapterStream: removed DAX channel" << channel;
 }
 
 // ─── Meter data decode ───────────────────────────────────────────────────────

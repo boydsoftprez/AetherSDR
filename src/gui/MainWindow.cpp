@@ -337,6 +337,36 @@ MainWindow::MainWindow(QWidget* parent)
     m_appletPanel->catApplet()->setRigctlServer(&m_rigctlServer);
     m_appletPanel->catApplet()->setRigctlPty(&m_rigctlPty);
     m_appletPanel->catApplet()->setAudioEngine(&m_audio);
+    m_appletPanel->catApplet()->setDaxManager(&m_daxManager);
+
+    // ── DAX audio routing ─────────────────────────────────────────────────
+    m_daxManager.init();
+
+    // Route per-channel DAX audio from radio → PipeWire virtual devices
+    connect(m_radioModel.panStream(), &PanadapterStream::daxAudioReady,
+            &m_daxManager, &DaxAudioManager::feedDaxRx);
+
+    // DAX enable/disable from CatApplet
+    connect(m_appletPanel->catApplet(), &CatApplet::daxEnableChanged,
+            this, [this](bool on) {
+        if (on) {
+            // Activate TX virtual sink
+            m_daxManager.activateTx();
+            // Activate RX channels for any slices that have DAX assigned
+            for (auto* s : m_radioModel.slices()) {
+                if (s->daxChannel() > 0) {
+                    m_radioModel.createDaxRxStream(s->daxChannel());
+                    m_daxManager.activateRxChannel(s->daxChannel());
+                }
+            }
+        } else {
+            for (int ch = 1; ch <= 4; ++ch) {
+                m_radioModel.removeDaxRxStream(ch);
+                m_daxManager.deactivateRxChannel(ch);
+            }
+            m_daxManager.deactivateTx();
+        }
+    });
     // DAX audio channels deferred — needs PipeWire virtual devices (issue #15)
 
     // ── Status bar telemetry ──────────────────────────────────────────────────

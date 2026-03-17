@@ -2,6 +2,7 @@
 #include "core/RigctlServer.h"
 #include "core/RigctlPty.h"
 #include "core/AudioEngine.h"
+#include "core/DaxAudioManager.h"
 #include "ComboStyle.h"
 #include "models/RadioModel.h"
 
@@ -221,14 +222,77 @@ void CatApplet::buildUI()
         }
     });
 
-    // ── DAX Section (placeholder) ───────────────────────────────────────────
+    // ── DAX Section ────────────────────────────────────────────────────────
     outer->addWidget(appletTitleBar("DAX Audio Channels"));
 
-    m_daxPlaceholder = new QLabel("DAX virtual audio requires PipeWire\n"
-                                   "integration — coming soon (issue #15)");
-    m_daxPlaceholder->setStyleSheet("QLabel { color: #506070; font-size: 10px; }");
-    m_daxPlaceholder->setAlignment(Qt::AlignCenter);
-    outer->addWidget(m_daxPlaceholder);
+    auto* daxRoot = new QVBoxLayout;
+    daxRoot->setContentsMargins(6, 4, 6, 4);
+    daxRoot->setSpacing(3);
+
+    // Master enable
+    auto* daxEnableRow = new QHBoxLayout;
+    daxEnableRow->setSpacing(4);
+    auto* daxLabel = new QLabel("DAX:");
+    daxLabel->setStyleSheet(kDimLabel);
+    daxLabel->setFixedWidth(kLabelW);
+    daxEnableRow->addWidget(daxLabel);
+    m_daxEnable = new QPushButton("Enable");
+    m_daxEnable->setCheckable(true);
+    m_daxEnable->setStyleSheet(kGreenToggle);
+    m_daxEnable->setFixedSize(60, 22);
+    daxEnableRow->addWidget(m_daxEnable);
+    daxEnableRow->addStretch();
+    daxRoot->addLayout(daxEnableRow);
+
+    // DAX channel status rows (1-4)
+    for (int i = 0; i < 4; ++i) {
+        auto* row = new QHBoxLayout;
+        row->setSpacing(4);
+        auto* chLabel = new QLabel(QString("DAX %1:").arg(i + 1));
+        chLabel->setStyleSheet(kDimLabel);
+        chLabel->setFixedWidth(kLabelW);
+        row->addWidget(chLabel);
+
+        m_daxStatus[i] = new QLabel("—");
+        m_daxStatus[i]->setStyleSheet("QLabel { color: #506070; font-size: 10px; }");
+        row->addWidget(m_daxStatus[i], 1);
+
+        m_daxIndicator[i] = new QLabel;
+        m_daxIndicator[i]->setFixedSize(8, 8);
+        m_daxIndicator[i]->setStyleSheet(
+            "QLabel { background: #304050; border-radius: 4px; }");
+        row->addWidget(m_daxIndicator[i]);
+        daxRoot->addLayout(row);
+    }
+
+    // DAX TX row
+    {
+        auto* row = new QHBoxLayout;
+        row->setSpacing(4);
+        auto* txLabel = new QLabel("TX:");
+        txLabel->setStyleSheet(kDimLabel);
+        txLabel->setFixedWidth(kLabelW);
+        row->addWidget(txLabel);
+
+        m_daxTxStatus = new QLabel("—");
+        m_daxTxStatus->setStyleSheet("QLabel { color: #506070; font-size: 10px; }");
+        row->addWidget(m_daxTxStatus, 1);
+
+        m_daxTxIndicator = new QLabel;
+        m_daxTxIndicator->setFixedSize(8, 8);
+        m_daxTxIndicator->setStyleSheet(
+            "QLabel { background: #304050; border-radius: 4px; }");
+        row->addWidget(m_daxTxIndicator);
+        daxRoot->addLayout(row);
+    }
+
+    auto* daxContainer = new QWidget;
+    daxContainer->setLayout(daxRoot);
+    outer->addWidget(daxContainer);
+
+    connect(m_daxEnable, &QPushButton::toggled, this, [this](bool on) {
+        emit daxEnableChanged(on);
+    });
 }
 
 void CatApplet::setRadioModel(RadioModel* model)
@@ -321,6 +385,40 @@ void CatApplet::setPtyEnabled(bool on)
     QSignalBlocker b(m_ptyEnable);
     m_ptyEnable->setChecked(on);
     updatePtyStatus();
+}
+
+void CatApplet::setDaxManager(DaxAudioManager* dax)
+{
+    m_daxManager = dax;
+    if (dax) {
+        connect(dax, &DaxAudioManager::channelStateChanged,
+                this, &CatApplet::updateDaxChannelStatus);
+        connect(dax, &DaxAudioManager::txStateChanged,
+                this, &CatApplet::updateDaxTxStatus);
+    }
+}
+
+void CatApplet::updateDaxChannelStatus(int channel, bool active)
+{
+    if (channel < 1 || channel > 4) return;
+    m_daxIndicator[channel - 1]->setStyleSheet(
+        active ? "QLabel { background: #00cc44; border-radius: 4px; }"
+               : "QLabel { background: #304050; border-radius: 4px; }");
+}
+
+void CatApplet::updateDaxTxStatus(bool active)
+{
+    m_daxTxIndicator->setStyleSheet(
+        active ? "QLabel { background: #00cc44; border-radius: 4px; }"
+               : "QLabel { background: #304050; border-radius: 4px; }");
+    m_daxTxStatus->setText(active ? "Active" : "—");
+}
+
+void CatApplet::setDaxSliceAssignment(int channel, const QString& sliceLetter)
+{
+    if (channel < 1 || channel > 4) return;
+    m_daxStatus[channel - 1]->setText(
+        sliceLetter.isEmpty() ? "—" : QString("Slice %1").arg(sliceLetter));
 }
 
 } // namespace AetherSDR

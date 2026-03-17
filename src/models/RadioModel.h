@@ -165,6 +165,10 @@ public:
     void setPanNoiseFloorPosition(int pos);
     void setPanNoiseFloorEnable(bool on);
 
+    // DAX stream lifecycle
+    void createDaxRxStream(int channel);
+    void removeDaxRxStream(int channel);
+
 signals:
     void infoChanged();
     void connectionStateChanged(bool connected);
@@ -277,6 +281,7 @@ private:
     double  m_panBandwidthMhz{0.200};
     QString m_panId;             // e.g. "0x40000000", empty until first status
     QString m_waterfallId;       // e.g. "0x42000000", from display waterfall status
+    QMap<int, quint32> m_daxRxStreamIds;  // DAX channel (1-4) → VITA-49 stream ID
     bool    m_panResized{false}; // true once we've sent the resize command
     bool    m_wfConfigured{false};
 

@@ -193,6 +193,37 @@ void RadioModel::setWaterfallLineDuration(int ms)
         QString("display panafall set %1 line_duration=%2").arg(m_waterfallId).arg(ms));
 }
 
+void RadioModel::createDaxRxStream(int channel)
+{
+    if (channel < 1 || channel > 4) return;
+    if (m_daxRxStreamIds.contains(channel)) return;  // already active
+
+    m_connection.sendCommand(
+        QString("stream create type=dax_rx dax_channel=%1").arg(channel),
+        [this, channel](int code, const QString& body) {
+            if (code == 0) {
+                quint32 streamId = body.trimmed().toUInt(nullptr, 16);
+                m_daxRxStreamIds[channel] = streamId;
+                m_panStream.setDaxStreamId(channel, streamId);
+                qDebug() << "RadioModel: DAX RX stream created for channel"
+                         << channel << "id: 0x" + QString::number(streamId, 16);
+            } else {
+                qWarning() << "RadioModel: DAX RX stream create failed for channel"
+                           << channel << "code:" << Qt::hex << code << body;
+            }
+        });
+}
+
+void RadioModel::removeDaxRxStream(int channel)
+{
+    if (!m_daxRxStreamIds.contains(channel)) return;
+    const quint32 streamId = m_daxRxStreamIds.take(channel);
+    m_connection.sendCommand(
+        QString("stream remove 0x%1").arg(streamId, 0, 16));
+    m_panStream.removeDaxStreamId(channel);
+    qDebug() << "RadioModel: removed DAX RX stream for channel" << channel;
+}
+
 void RadioModel::setPanNoiseFloorPosition(int pos)
 {
     if (m_panId.isEmpty()) return;
