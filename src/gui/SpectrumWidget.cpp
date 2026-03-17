@@ -346,9 +346,9 @@ void SpectrumWidget::mousePressEvent(QMouseEvent* ev)
         return;
     }
 
-    // Click in waterfall area → start pan drag (tune on double-click only)
+    // Left-click in waterfall area → start pan drag (tune on double-click only)
     const int wfY = scaleY + FREQ_SCALE_H;
-    if (y >= wfY) {
+    if (y >= wfY && ev->button() == Qt::LeftButton) {
         m_draggingPan = true;
         m_panDragStartX = static_cast<int>(ev->position().x());
         m_panDragStartCenter = m_centerMhz;
