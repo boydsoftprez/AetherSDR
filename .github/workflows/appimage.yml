@@ -49,6 +49,20 @@ jobs:
           convert AppDir/usr/share/icons/hicolor/256x256/apps/aethersdr.png \
             -resize 256x256 AppDir/usr/share/icons/hicolor/256x256/apps/aethersdr.png
 
+          # Bundle Qt6 multimedia backend plugin (linuxdeploy-plugin-qt misses this)
+          QT_PLUGIN_PATH=$(qmake6 -query QT_INSTALL_PLUGINS 2>/dev/null || qmake -query QT_INSTALL_PLUGINS)
+          mkdir -p AppDir/usr/plugins/multimedia
+          cp -v "$QT_PLUGIN_PATH"/multimedia/libgstreamer* AppDir/usr/plugins/multimedia/ 2>/dev/null || true
+          cp -v "$QT_PLUGIN_PATH"/multimedia/libffmpeg* AppDir/usr/plugins/multimedia/ 2>/dev/null || true
+
+          # Bundle essential GStreamer plugins for audio
+          GST_PATH=$(pkg-config --variable=pluginsdir gstreamer-1.0 2>/dev/null || echo "/usr/lib/$(uname -m)-linux-gnu/gstreamer-1.0")
+          mkdir -p AppDir/usr/lib/gstreamer-1.0
+          for p in libgstpulseaudio.so libgstpipewiresrc.so libgstalsa.so libgstaudioconvert.so \
+                   libgstaudioresample.so libgstautodetect.so libgstcoreelements.so libgsttypefindfunctions.so; do
+            cp -v "$GST_PATH/$p" AppDir/usr/lib/gstreamer-1.0/ 2>/dev/null || true
+          done
+
       - name: Download linuxdeploy + Qt plugin
         run: |
           wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-${{ matrix.arch }}.AppImage
@@ -59,8 +73,21 @@ jobs:
         env:
           LDAI_OUTPUT: AetherSDR-${{ github.ref_name }}-${{ matrix.arch }}.AppImage
           QT_SELECT: qt6
+          EXTRA_QT_PLUGINS: multimedia
         run: |
           export QMAKE=$(which qmake6 2>/dev/null || which qmake)
+
+          # Create wrapper script that sets GST_PLUGIN_PATH for bundled plugins
+          mkdir -p AppDir/usr/bin
+          cat > AppDir/usr/bin/aethersdr-wrapper << 'WRAPPER'
+          #!/bin/bash
+          HERE="$(dirname "$(readlink -f "${0}")")"
+          export GST_PLUGIN_PATH="${HERE}/../lib/gstreamer-1.0:${GST_PLUGIN_PATH}"
+          export QT_PLUGIN_PATH="${HERE}/../plugins:${QT_PLUGIN_PATH}"
+          exec "${HERE}/AetherSDR" "$@"
+          WRAPPER
+          chmod +x AppDir/usr/bin/aethersdr-wrapper
+
           ./linuxdeploy-${{ matrix.arch }}.AppImage \
             --appdir AppDir \
             --plugin qt \
