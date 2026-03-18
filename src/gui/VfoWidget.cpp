@@ -217,23 +217,15 @@ void VfoWidget::buildUI()
         "border-radius: 3px; font-weight: bold; font-size: 11px; }");
     hdr->addWidget(m_sliceBadge);
 
-    // Lock button (prevents tuning changes)
-    m_lockVfoBtn = new QPushButton("\xF0\x9F\x94\x93");  // 🔓
-    m_lockVfoBtn->setFixedSize(20, 20);
-    m_lockVfoBtn->setCheckable(true);
-    m_lockVfoBtn->setStyleSheet(
-        "QPushButton { background: rgba(255,255,255,15); border: none; "
-        "border-radius: 10px; font-size: 12px; padding: 0; }"
-        "QPushButton:checked { background: rgba(255,100,100,80); }"
-        "QPushButton:hover { background: rgba(255,255,255,40); }");
-    connect(m_lockVfoBtn, &QPushButton::toggled, this, [this](bool locked) {
-        m_lockVfoBtn->setText(locked ? "\xF0\x9F\x94\x92" : "\xF0\x9F\x94\x93");  // 🔒 / 🔓
-        emit lockToggled(locked);
-    });
-    hdr->addWidget(m_lockVfoBtn);
+    root->addLayout(hdr);
 
-    // Close slice button (circle with X)
-    m_closeSliceBtn = new QPushButton("\xE2\x9C\x95");  // ✕
+    // Close and lock buttons — floating outside the VFO overlay,
+    // stacked vertically on the side opposite the marker.
+    // Created as children of our parent (SpectrumWidget) so they
+    // render outside our bounds. Positioned in updatePosition().
+    auto* btnParent = parentWidget() ? parentWidget() : this;
+
+    m_closeSliceBtn = new QPushButton("\xE2\x9C\x95", btnParent);  // ✕
     m_closeSliceBtn->setFixedSize(20, 20);
     m_closeSliceBtn->setStyleSheet(
         "QPushButton { background: rgba(255,255,255,15); border: none; "
@@ -242,9 +234,19 @@ void VfoWidget::buildUI()
     connect(m_closeSliceBtn, &QPushButton::clicked, this, [this] {
         emit closeSliceRequested();
     });
-    hdr->addWidget(m_closeSliceBtn);
 
-    root->addLayout(hdr);
+    m_lockVfoBtn = new QPushButton("\xF0\x9F\x94\x93", btnParent);  // 🔓
+    m_lockVfoBtn->setFixedSize(20, 20);
+    m_lockVfoBtn->setCheckable(true);
+    m_lockVfoBtn->setStyleSheet(
+        "QPushButton { background: rgba(255,255,255,15); border: none; "
+        "border-radius: 10px; font-size: 12px; padding: 0; }"
+        "QPushButton:checked { background: rgba(255,100,100,80); }"
+        "QPushButton:hover { background: rgba(255,255,255,40); }");
+    connect(m_lockVfoBtn, &QPushButton::toggled, this, [this](bool locked) {
+        m_lockVfoBtn->setText(locked ? "\xF0\x9F\x94\x92" : "\xF0\x9F\x94\x93");
+        emit lockToggled(locked);
+    });
 
     // ── Frequency row (right-aligned) ─────────────────────────────────────
     m_freqLabel = new QLabel("14.225.000");
@@ -1010,13 +1012,31 @@ void VfoWidget::updatePosition(int vfoX, int specTop)
 {
     const int w = width();
     int x = vfoX - w;  // default: left of VFO marker
+    bool onLeft = true;
 
     // Flip to right side if widget would be clipped on the left
-    if (x < 0)
+    if (x < 0) {
         x = vfoX;
+        onLeft = false;
+    }
 
-    // Let the widget leave the screen naturally on both sides
     move(x, specTop);
+
+    // Position close/lock buttons stacked vertically on the side opposite the marker
+    if (m_closeSliceBtn && m_lockVfoBtn) {
+        const int btnSize = 20;
+        const int gap = 2;
+        int btnX;
+        if (onLeft)
+            btnX = x - btnSize - gap;  // left of VFO widget
+        else
+            btnX = x + w + gap;        // right of VFO widget
+
+        m_closeSliceBtn->move(btnX, specTop);
+        m_lockVfoBtn->move(btnX, specTop + btnSize + gap);
+        m_closeSliceBtn->raise();
+        m_lockVfoBtn->raise();
+    }
 }
 
 // ── S-Meter bar (custom paint) ────────────────────────────────────────────────
