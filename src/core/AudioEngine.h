@@ -112,6 +112,7 @@ private:
     QAudioDevice m_inputDevice;
     float m_rxVolume{1.0f};
     bool  m_muted{false};
+    bool  m_resampleTo48k{false};  // upsample 24kHz → 48kHz for devices that don't support 24kHz
 
     // Client-side NR2
     std::unique_ptr<SpectralNR> m_nr2;

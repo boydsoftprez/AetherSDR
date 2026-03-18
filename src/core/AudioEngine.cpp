@@ -36,12 +36,22 @@ bool AudioEngine::startRxStream()
 {
     if (m_audioSink) return true;   // already running
 
-    const QAudioFormat fmt = makeFormat();
+    QAudioFormat fmt = makeFormat();
     const QAudioDevice dev = m_outputDevice.isNull()
         ? QMediaDevices::defaultAudioOutput() : m_outputDevice;
 
-    if (!dev.isFormatSupported(fmt))
-        qWarning() << "AudioEngine: output device does not support 24kHz stereo Int16";
+    if (!dev.isFormatSupported(fmt)) {
+        qWarning() << "AudioEngine: output device does not support 24kHz stereo Int16, trying 48kHz";
+        fmt.setSampleRate(48000);
+        m_resampleTo48k = true;
+        if (!dev.isFormatSupported(fmt)) {
+            qWarning() << "AudioEngine: output device does not support 48kHz stereo Int16 either";
+            qWarning() << "No audio device detected";
+            return false;
+        }
+    } else {
+        m_resampleTo48k = false;
+    }
 
     m_audioSink   = new QAudioSink(dev, fmt, this);
     m_audioSink->setVolume(m_rxVolume);
@@ -84,16 +94,39 @@ void AudioEngine::setMuted(bool muted)
         m_audioSink->setVolume(muted ? 0.0f : m_rxVolume);
 }
 
+// Upsample 24kHz stereo Int16 → 48kHz by duplicating each sample pair
+static QByteArray upsample2x(const QByteArray& pcm24k)
+{
+    QByteArray out(pcm24k.size() * 2, Qt::Uninitialized);
+    const auto* src = reinterpret_cast<const qint16*>(pcm24k.constData());
+    auto* dst = reinterpret_cast<qint16*>(out.data());
+    const int stereoSamples = pcm24k.size() / 4;  // 2 channels × 2 bytes
+    for (int i = 0; i < stereoSamples; ++i) {
+        // Copy L+R pair twice
+        dst[i * 4 + 0] = src[i * 2 + 0];  // L
+        dst[i * 4 + 1] = src[i * 2 + 1];  // R
+        dst[i * 4 + 2] = src[i * 2 + 0];  // L (dup)
+        dst[i * 4 + 3] = src[i * 2 + 1];  // R (dup)
+    }
+    return out;
+}
+
 void AudioEngine::feedAudioData(const QByteArray& pcm)
 {
+    auto writeAudio = [this](const QByteArray& data) {
+        if (!m_audioDevice || !m_audioDevice->isOpen()) return;
+        if (m_resampleTo48k)
+            m_audioDevice->write(upsample2x(data));
+        else
+            m_audioDevice->write(data);
+    };
+
     if (m_nr2Enabled && m_nr2) {
         processNr2(pcm);
-        if (m_audioDevice && m_audioDevice->isOpen())
-            m_audioDevice->write(m_nr2Output);
+        writeAudio(m_nr2Output);
         emit levelChanged(computeRMS(m_nr2Output));
     } else {
-        if (m_audioDevice && m_audioDevice->isOpen())
-            m_audioDevice->write(pcm);
+        writeAudio(pcm);
         emit levelChanged(computeRMS(pcm));
     }
 }
