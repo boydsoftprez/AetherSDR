@@ -247,7 +247,7 @@ void RADEEngine::feedRxAudio(int channel, const QByteArray& pcm)
                 float zeros[320] = {0};
                 float warmup_features[5 * NB_TOTAL_FEATURES] = {0};
                 // Copy first set of features for warmup
-                std::memcpy(warmup_features, features_out,
+                std::memcpy(warmup_features, features_out.data(),
                             NB_TOTAL_FEATURES * sizeof(float));
                 fargan_cont(fargan, zeros, warmup_features);
                 m_farganWarmedUp = true;

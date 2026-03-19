@@ -55,17 +55,41 @@ else()
     endif()
 endif()
 
-# RADE (Radio Autoencoder) — optional FreeDV digital voice codec
-# Install radae_nopy from https://github.com/drowe67/radae_nopy
-find_library(RADE_LIB NAMES rade)
-find_path(RADE_INC rade_api.h)
-if(RADE_LIB AND RADE_INC)
+# Bundled RADE (BSD-2) — FreeDV Radio Autoencoder digital voice codec
+# Opus (with FARGAN/LPCNet) is downloaded and built automatically via ExternalProject
+set(RADE_DIR ${CMAKE_SOURCE_DIR}/third_party/radae)
+option(ENABLE_RADE "Build with RADE digital voice support (downloads Opus at configure time)" ON)
+if(ENABLE_RADE AND EXISTS "${RADE_DIR}/src/rade_api.h")
+    include(${RADE_DIR}/cmake/BuildOpus.cmake)
+    set(RADE_SOURCES
+        ${RADE_DIR}/src/rade_api_nopy.c
+        ${RADE_DIR}/src/rade_dsp.c
+        ${RADE_DIR}/src/rade_ofdm.c
+        ${RADE_DIR}/src/rade_bpf.c
+        ${RADE_DIR}/src/rade_acq.c
+        ${RADE_DIR}/src/rade_tx.c
+        ${RADE_DIR}/src/rade_rx.c
+        ${RADE_DIR}/src/rade_enc.c
+        ${RADE_DIR}/src/rade_dec.c
+        ${RADE_DIR}/src/rade_enc_data.c
+        ${RADE_DIR}/src/rade_dec_data.c
+        ${RADE_DIR}/src/kiss_fft.c
+        ${RADE_DIR}/src/kiss_fftr.c
+    )
+    set_source_files_properties(${RADE_SOURCES} PROPERTIES
+        COMPILE_FLAGS "-w -DIS_BUILDING_RADE_API=1 -DRADE_PYTHON_FREE=1"
+        INCLUDE_DIRECTORIES "${RADE_DIR}/src"
+    )
     set(RADE_FOUND TRUE)
-    set(RADE_INCLUDE_DIRS "${RADE_INC}")
-    message(STATUS "RADE found: ${RADE_LIB}")
+    message(STATUS "RADE enabled (bundled, Opus will be downloaded)")
 else()
     set(RADE_FOUND FALSE)
-    message(STATUS "RADE not found. FreeDV digital voice disabled.")
+    set(RADE_SOURCES "")
+    if(ENABLE_RADE)
+        message(STATUS "RADE source not found at ${RADE_DIR}. Digital voice disabled.")
+    else()
+        message(STATUS "RADE disabled by ENABLE_RADE=OFF.")
+    endif()
 endif()
 
 # Sources
@@ -208,7 +232,7 @@ endif()
 
 qt_add_resources(RESOURCES resources.qrc)
 
-add_executable(AetherSDR ${ALL_SOURCES} ${RNNOISE_SOURCES} ${GGMORSE_SOURCES} ${RESOURCES})
+add_executable(AetherSDR ${ALL_SOURCES} ${RNNOISE_SOURCES} ${GGMORSE_SOURCES} ${RADE_SOURCES} ${RESOURCES})
 
 # macOS app bundle
 if(APPLE)
@@ -265,8 +289,9 @@ endif()
 
 if(RADE_FOUND)
     target_compile_definitions(AetherSDR PRIVATE HAVE_RADE)
-    target_include_directories(AetherSDR PRIVATE ${RADE_INCLUDE_DIRS})
-    target_link_libraries(AetherSDR PRIVATE ${RADE_LIB})
+    target_include_directories(AetherSDR PRIVATE ${RADE_DIR}/src)
+    target_link_libraries(AetherSDR PRIVATE opus m)
+    add_dependencies(AetherSDR build_opus)
 endif()
 
 # Pass project version to code
