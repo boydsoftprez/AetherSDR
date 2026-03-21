@@ -64,6 +64,16 @@ RadioInfo RadioDiscovery::parseDiscoveryPacket(const QByteArray& data) const
         else if (key == "callsign") info.callsign = value;
         else if (key == "inuse")   info.inUse   = (value == "1");
         else if (key == "max_licensed_version") info.maxLicensedVersion = value.toInt();
+        else if (key == "gui_client_programs")
+            info.guiClientPrograms = value.split(',', Qt::SkipEmptyParts);
+        else if (key == "gui_client_stations") {
+            // Stations use \x7f for spaces
+            QString cleaned = value;
+            cleaned.replace('\x7f', ' ');
+            info.guiClientStations = cleaned.split(',', Qt::SkipEmptyParts);
+        }
+        else if (key == "gui_client_handles")
+            info.guiClientHandles = value.split(',', Qt::SkipEmptyParts);
     }
     return info;
 }

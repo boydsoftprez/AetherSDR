@@ -25,13 +25,25 @@ struct RadioInfo {
     bool inUse{false};
     bool isRouted{false};
 
+    // Connected GUI clients (comma-separated in discovery packet)
+    QStringList guiClientPrograms;   // e.g. "SmartSDR-Win", "Maestro"
+    QStringList guiClientStations;   // e.g. "FLEX_NUC_WX7Y"
+    QStringList guiClientHandles;    // e.g. "0x7F1C30C0"
+
+    bool hasOtherClients() const { return !guiClientPrograms.isEmpty(); }
+
     QString displayName() const {
         const QString connType = isRouted ? "routed" : "local";
+        QString suffix;
+        if (!guiClientPrograms.isEmpty())
+            suffix = QString("multiFLEX: %1").arg(guiClientPrograms.first());
+        else
+            suffix = connType;
         if (nickname.isEmpty() && callsign.isEmpty())
             return QString("%1 @ %2\nAvailable (%3)")
-                .arg(model, address.toString(), connType);
+                .arg(model, address.toString(), suffix);
         return QString("%1  %2  %3\nAvailable (%4)")
-            .arg(model, nickname, callsign, connType);
+            .arg(model, nickname, callsign, suffix);
     }
 };
 
