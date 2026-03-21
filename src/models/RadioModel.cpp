@@ -510,6 +510,7 @@ void RadioModel::registerAsGuiClient(const QString& clientId)
             // Request global profile list
             sendCmd("profile global info");
             sendCmd("sub tnf all");
+            sendCmd("sub memories all");
             }); // sub xvtr all
             }); // sub apd all
             }); // sub gps all
