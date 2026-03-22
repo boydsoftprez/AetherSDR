@@ -315,123 +315,8 @@ MainWindow::MainWindow(QWidget* parent)
     });
     connect(&m_radioModel, &RadioModel::panadapterLevelChanged,
             spectrum(), &SpectrumWidget::setDbmRange);
-    connect(spectrum(), &SpectrumWidget::bandwidthChangeRequested,
-            &m_radioModel, &RadioModel::setPanBandwidth);
-    connect(spectrum(), &SpectrumWidget::centerChangeRequested,
-            &m_radioModel, &RadioModel::setPanCenter);
-    connect(spectrum(), &SpectrumWidget::filterChangeRequested,
-            this, [this](int lo, int hi) {
-        if (auto* s = activeSlice()) s->setFilterWidth(lo, hi);
-    });
-    connect(spectrum(), &SpectrumWidget::dbmRangeChangeRequested,
-            &m_radioModel, &RadioModel::setPanDbmRange);
-
-    // ── TNF model ↔ spectrum widget ──────────────────────────────────────
-    auto* tnf = m_radioModel.tnfModel();
-    auto rebuildTnfMarkers = [this]() {
-        auto* t = m_radioModel.tnfModel();
-        QVector<SpectrumWidget::TnfMarker> markers;
-        for (const auto& e : t->tnfs())
-            markers.append({e.id, e.freqMhz, e.widthHz, e.depthDb, e.permanent});
-        spectrum()->setTnfMarkers(markers);
-    };
-    connect(tnf, &TnfModel::tnfChanged,          this, rebuildTnfMarkers);
-    connect(tnf, &TnfModel::tnfRemoved,           this, rebuildTnfMarkers);
-    connect(tnf, &TnfModel::globalEnabledChanged,
-            spectrum(), &SpectrumWidget::setTnfGlobalEnabled);
-    connect(tnf, &TnfModel::globalEnabledChanged,
-            this, [this](bool on) {
-        m_tnfIndicator->setStyleSheet(on
-            ? "QLabel { color: rgba(255,255,255,128); font-weight: bold; font-size: 24px; }"
-            : "QLabel { color: #404858; font-weight: bold; font-size: 24px; }");
-    });
-    connect(spectrum(), &SpectrumWidget::tnfCreateRequested,
-            tnf, &TnfModel::createTnf);
-    connect(spectrum(), &SpectrumWidget::tnfMoveRequested,
-            tnf, &TnfModel::setTnfFreq);
-    connect(spectrum(), &SpectrumWidget::tnfRemoveRequested,
-            tnf, &TnfModel::requestRemoveTnf);
-    connect(spectrum(), &SpectrumWidget::tnfWidthRequested,
-            tnf, &TnfModel::setTnfWidth);
-    connect(spectrum(), &SpectrumWidget::tnfDepthRequested,
-            tnf, &TnfModel::setTnfDepth);
-    connect(spectrum(), &SpectrumWidget::tnfPermanentRequested,
-            tnf, &TnfModel::setTnfPermanent);
-
-    // ── Click-to-tune on the spectrum ─────────────────────────────────────
-    connect(spectrum(), &SpectrumWidget::frequencyClicked,
-            this, &MainWindow::onFrequencyChanged);
-
-    // ── +RX button: add a new slice on the current panadapter ──────────────
-    connect(spectrum()->overlayMenu(), &SpectrumOverlayMenu::addRxClicked,
-            this, [this]() {
-        if (m_radioModel.slices().size() < m_radioModel.maxSlices())
-            m_radioModel.addSlice();
-    });
-    connect(spectrum()->overlayMenu(), &SpectrumOverlayMenu::addTnfClicked,
-            this, [this]() {
-        auto* s = activeSlice();
-        if (!s) return;
-        // Place TNF at the center of the filter passband
-        double tnfFreq = s->frequency()
-            + (s->filterLow() + s->filterHigh()) / 2.0 / 1.0e6;
-        m_radioModel.tnfModel()->createTnf(tnfFreq);
-    });
-
-    // ── Slice marker click → switch active slice ────────────────────────────
-    connect(spectrum(), &SpectrumWidget::sliceClicked,
-            this, &MainWindow::setActiveSlice);
-    connect(spectrum(), &SpectrumWidget::sliceTxRequested,
-            this, [this](int sliceId) {
-        if (auto* s = m_radioModel.slice(sliceId))
-            s->setTxSlice(true);
-    });
-    connect(spectrum(), &SpectrumWidget::sliceCloseRequested,
-            this, [this](int sliceId) {
-        if (m_radioModel.slices().size() <= 1) return;
-        m_radioModel.sendCommand(QString("slice remove %1").arg(sliceId));
-    });
-
-    // VFO widget close/lock/afGain/autotune/split/pcAudio are now wired
-    // per-widget in wireVfoWidget() and wireActiveVfoSignals().
-
-    // ── Band selection from overlay menu ───────────────────────────────────
-    connect(spectrum()->overlayMenu(), &SpectrumOverlayMenu::bandSelected,
-            this, [this](const QString& bandName, double freqMhz, const QString& mode) {
-        // Band memory save/restore is deprecated pending redesign.
-        // For now, always use band defaults (freq + mode from BandDefs).
-        qDebug() << "MainWindow: switching to band" << bandName
-                 << "freq:" << freqMhz << "mode:" << mode;
-        m_bandSettings.setCurrentBand(bandName);
-        if (auto* s = activeSlice())
-            s->setMode(mode);
-        onFrequencyChanged(freqMhz);
-    });
-
-    // ── WNB toggle from overlay menu → panadapter + indicator ──────────────
-    connect(spectrum()->overlayMenu(), &SpectrumOverlayMenu::wnbToggled,
-            this, [this](bool on) {
-        m_radioModel.setPanWnb(on);
-        spectrum()->setWnbActive(on);
-        auto& s = AppSettings::instance();
-        s.setValue("DisplayWnbEnabled", on ? "True" : "False");
-        s.save();
-    });
-    connect(spectrum()->overlayMenu(), &SpectrumOverlayMenu::wnbLevelChanged,
-            this, [this](int level) {
-        m_radioModel.setPanWnbLevel(level);
-        auto& s = AppSettings::instance();
-        s.setValue("DisplayWnbLevel", QString::number(level));
-        s.save();
-    });
-    connect(spectrum()->overlayMenu(), &SpectrumOverlayMenu::rfGainChanged,
-            this, [this](int gain) {
-        m_radioModel.setPanRfGain(gain);
-        spectrum()->setRfGain(gain);
-        auto& s = AppSettings::instance();
-        s.setValue("DisplayRfGain", QString::number(gain));
-        s.save();
-    });
+    // ── Per-panadapter signal wiring (extracted for multi-pan support) ──────
+    wirePanadapter(m_panApplet);
 
     // ── Display sub-panel → SpectrumWidget (client-side for now) ─────────
     auto* overlay = spectrum()->overlayMenu();
@@ -522,22 +407,7 @@ MainWindow::MainWindow(QWidget* parent)
             vfo->rn2Button()->setChecked(on);
         }
     });
-    connect(&m_audio, &AudioEngine::rn2EnabledChanged,
-            this, [this](bool on) {
-        if (auto* btn = spectrum()->overlayMenu()->dspRn2Button())
-            { QSignalBlocker sb(btn); btn->setChecked(on); }
-    });
-    // Overlay DSP panel NR2/RN2 → forward to active VfoWidget button
-    connect(spectrum()->overlayMenu(), &SpectrumOverlayMenu::nr2Toggled,
-            this, [this](bool on) {
-        if (auto* vfo = spectrum()->vfoWidget())
-            vfo->nr2Button()->setChecked(on);
-    });
-    connect(spectrum()->overlayMenu(), &SpectrumOverlayMenu::rn2Toggled,
-            this, [this](bool on) {
-        if (auto* vfo = spectrum()->vfoWidget())
-            vfo->rn2Button()->setChecked(on);
-    });
+    // NR2/RN2 overlay sync is wired in wirePanadapter()
     // RxApplet NR button 3-state cycle → NR2 enable/disable
     connect(m_appletPanel->rxApplet(), &RxApplet::nr2CycleToggled,
             this, [this](bool on) {
@@ -1735,6 +1605,141 @@ void MainWindow::updateSplitState()
             w->updateSplitBadge(isTxSlice, isRxSplit);
         }
     }
+}
+
+// ── Per-panadapter signal wiring ──────────────────────────────────────────────
+// Called once per PanadapterApplet. Connects the SpectrumWidget and its
+// OverlayMenu signals to RadioModel, TnfModel, and MainWindow handlers.
+// In multi-pan mode (Phase 6+), called for each new panadapter.
+
+void MainWindow::wirePanadapter(PanadapterApplet* applet)
+{
+    auto* sw = applet->spectrumWidget();
+    auto* menu = sw->overlayMenu();
+
+    // ── User drag actions from spectrum → RadioModel ──────────────────────
+    connect(sw, &SpectrumWidget::bandwidthChangeRequested,
+            &m_radioModel, &RadioModel::setPanBandwidth);
+    connect(sw, &SpectrumWidget::centerChangeRequested,
+            &m_radioModel, &RadioModel::setPanCenter);
+    connect(sw, &SpectrumWidget::filterChangeRequested,
+            this, [this](int lo, int hi) {
+        if (auto* s = activeSlice()) s->setFilterWidth(lo, hi);
+    });
+    connect(sw, &SpectrumWidget::dbmRangeChangeRequested,
+            &m_radioModel, &RadioModel::setPanDbmRange);
+
+    // ── TNF signals ──────────────────────────────────────────────────────
+    auto* tnf = m_radioModel.tnfModel();
+    auto rebuildTnfMarkers = [this, sw]() {
+        auto* t = m_radioModel.tnfModel();
+        QVector<SpectrumWidget::TnfMarker> markers;
+        for (const auto& e : t->tnfs())
+            markers.append({e.id, e.freqMhz, e.widthHz, e.depthDb, e.permanent});
+        sw->setTnfMarkers(markers);
+    };
+    connect(tnf, &TnfModel::tnfChanged,  this, rebuildTnfMarkers);
+    connect(tnf, &TnfModel::tnfRemoved,  this, rebuildTnfMarkers);
+    connect(tnf, &TnfModel::globalEnabledChanged,
+            sw, &SpectrumWidget::setTnfGlobalEnabled);
+    connect(tnf, &TnfModel::globalEnabledChanged,
+            this, [this](bool on) {
+        m_tnfIndicator->setStyleSheet(on
+            ? "QLabel { color: rgba(255,255,255,128); font-weight: bold; font-size: 24px; }"
+            : "QLabel { color: #404858; font-weight: bold; font-size: 24px; }");
+    });
+    connect(sw, &SpectrumWidget::tnfCreateRequested,   tnf, &TnfModel::createTnf);
+    connect(sw, &SpectrumWidget::tnfMoveRequested,     tnf, &TnfModel::setTnfFreq);
+    connect(sw, &SpectrumWidget::tnfRemoveRequested,   tnf, &TnfModel::requestRemoveTnf);
+    connect(sw, &SpectrumWidget::tnfWidthRequested,    tnf, &TnfModel::setTnfWidth);
+    connect(sw, &SpectrumWidget::tnfDepthRequested,    tnf, &TnfModel::setTnfDepth);
+    connect(sw, &SpectrumWidget::tnfPermanentRequested,tnf, &TnfModel::setTnfPermanent);
+
+    // ── Click-to-tune ────────────────────────────────────────────────────
+    connect(sw, &SpectrumWidget::frequencyClicked,
+            this, &MainWindow::onFrequencyChanged);
+
+    // ── +RX / +TNF buttons ───────────────────────────────────────────────
+    connect(menu, &SpectrumOverlayMenu::addRxClicked,
+            this, [this]() {
+        if (m_radioModel.slices().size() < m_radioModel.maxSlices())
+            m_radioModel.addSlice();
+    });
+    connect(menu, &SpectrumOverlayMenu::addTnfClicked,
+            this, [this]() {
+        auto* s = activeSlice();
+        if (!s) return;
+        double tnfFreq = s->frequency()
+            + (s->filterLow() + s->filterHigh()) / 2.0 / 1.0e6;
+        m_radioModel.tnfModel()->createTnf(tnfFreq);
+    });
+
+    // ── Slice marker clicks ──────────────────────────────────────────────
+    connect(sw, &SpectrumWidget::sliceClicked,
+            this, &MainWindow::setActiveSlice);
+    connect(sw, &SpectrumWidget::sliceTxRequested,
+            this, [this](int sliceId) {
+        if (auto* s = m_radioModel.slice(sliceId))
+            s->setTxSlice(true);
+    });
+    connect(sw, &SpectrumWidget::sliceCloseRequested,
+            this, [this](int sliceId) {
+        if (m_radioModel.slices().size() <= 1) return;
+        m_radioModel.sendCommand(QString("slice remove %1").arg(sliceId));
+    });
+
+    // ── Band selection ───────────────────────────────────────────────────
+    connect(menu, &SpectrumOverlayMenu::bandSelected,
+            this, [this](const QString& bandName, double freqMhz, const QString& mode) {
+        qDebug() << "MainWindow: switching to band" << bandName
+                 << "freq:" << freqMhz << "mode:" << mode;
+        m_bandSettings.setCurrentBand(bandName);
+        if (auto* s = activeSlice())
+            s->setMode(mode);
+        onFrequencyChanged(freqMhz);
+    });
+
+    // ── WNB / RF Gain ────────────────────────────────────────────────────
+    connect(menu, &SpectrumOverlayMenu::wnbToggled,
+            this, [this, sw](bool on) {
+        m_radioModel.setPanWnb(on);
+        sw->setWnbActive(on);
+        auto& s = AppSettings::instance();
+        s.setValue("DisplayWnbEnabled", on ? "True" : "False");
+        s.save();
+    });
+    connect(menu, &SpectrumOverlayMenu::wnbLevelChanged,
+            this, [this](int level) {
+        m_radioModel.setPanWnbLevel(level);
+        auto& s = AppSettings::instance();
+        s.setValue("DisplayWnbLevel", QString::number(level));
+        s.save();
+    });
+    connect(menu, &SpectrumOverlayMenu::rfGainChanged,
+            this, [this, sw](int gain) {
+        m_radioModel.setPanRfGain(gain);
+        sw->setRfGain(gain);
+        auto& s = AppSettings::instance();
+        s.setValue("DisplayRfGain", QString::number(gain));
+        s.save();
+    });
+
+    // ── NR2/RN2 overlay sync ─────────────────────────────────────────────
+    connect(&m_audio, &AudioEngine::rn2EnabledChanged,
+            this, [menu](bool on) {
+        if (auto* btn = menu->dspRn2Button())
+            { QSignalBlocker sb(btn); btn->setChecked(on); }
+    });
+    connect(menu, &SpectrumOverlayMenu::nr2Toggled,
+            this, [sw](bool on) {
+        if (auto* vfo = sw->vfoWidget())
+            vfo->nr2Button()->setChecked(on);
+    });
+    connect(menu, &SpectrumOverlayMenu::rn2Toggled,
+            this, [sw](bool on) {
+        if (auto* vfo = sw->vfoWidget())
+            vfo->rn2Button()->setChecked(on);
+    });
 }
 
 void MainWindow::wireVfoWidget(VfoWidget* w, SliceModel* s)

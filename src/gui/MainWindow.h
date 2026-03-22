@@ -71,6 +71,7 @@ private:
     void pushSliceOverlay(SliceModel* s);
     void updateSplitState();
     void disableSplit();
+    void wirePanadapter(PanadapterApplet* applet);
     void wireVfoWidget(VfoWidget* w, SliceModel* s);
     void wireActiveVfoSignals(VfoWidget* w);
 
