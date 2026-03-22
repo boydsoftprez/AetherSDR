@@ -1,6 +1,7 @@
 #include "gui/MainWindow.h"
 #include "core/AppSettings.h"
 #include "core/LogManager.h"
+#include "core/MacMicPermission.h"
 
 #include <QApplication>
 #include <QSurfaceFormat>
@@ -39,6 +40,10 @@ int main(int argc, char* argv[])
     app.setApplicationVersion(AETHERSDR_VERSION);
     app.setOrganizationName("AetherSDR");
     app.setDesktopFileName("AetherSDR");  // matches .desktop file for taskbar icon
+
+    // Request microphone permission early (macOS only).
+    // Shows the system prompt on first launch so it's ready before PTT.
+    requestMicrophonePermission();
 
     // Set up file logging in ~/.config/AetherSDR/ (works inside AppImage where
     // applicationDirPath() is read-only).
