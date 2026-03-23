@@ -1688,7 +1688,7 @@ void MainWindow::onSliceAdded(SliceModel* s)
         QTimer::singleShot(500, this, [this]() {
             auto& settings = AppSettings::instance();
             if (settings.value("ClientNr2Enabled", "False").toString() == "True")
-                m_audio.setNr2Enabled(true);
+                enableNr2WithWisdom();
             else if (settings.value("ClientRn2Enabled", "False").toString() == "True")
                 m_audio.setRn2Enabled(true);
         });
@@ -2227,7 +2227,7 @@ void MainWindow::wirePanadapter(PanadapterApplet* applet)
             this, [this](bool on) {
         if (on) {
             m_audio.setRn2Enabled(false);
-            m_audio.setNr2Enabled(true);
+            enableNr2WithWisdom();
         } else {
             m_audio.setNr2Enabled(false);
         }
@@ -2319,64 +2319,7 @@ void MainWindow::wireActiveVfoSignals(VfoWidget* w)
             m_audio.setNr2Enabled(false);
             return;
         }
-        if (AudioEngine::needsWisdomGeneration()) {
-            auto* dlg = new QProgressDialog(
-                "Optimizing FFT plans for NR2...\n\n"
-                "This window will automatically close when wisdom generation is complete.",
-                QString(), 0, 100, this);
-            dlg->setWindowTitle("AetherSDR — FFTW Wisdom");
-            dlg->setWindowModality(Qt::ApplicationModal);
-            dlg->setMinimumDuration(0);
-            dlg->setAutoClose(false);
-            dlg->setAutoReset(false);
-            dlg->setCancelButton(nullptr);
-            dlg->setMinimumWidth(500);
-            dlg->setStyleSheet(
-                "QProgressBar { text-align: center; font-size: 13px;"
-                " font-weight: bold; color: #c8d8e8;"
-                " background: #1a2a3a; border: 1px solid #2e4e6e; border-radius: 3px; }"
-                "QProgressBar::chunk { background: #00b4d8; }");
-            dlg->show();
-
-            auto* breathe = new QPropertyAnimation(dlg, "windowOpacity", dlg);
-            breathe->setDuration(1500);
-            breathe->setStartValue(1.0);
-            breathe->setKeyValueAt(0.5, 0.55);
-            breathe->setEndValue(1.0);
-            breathe->setLoopCount(-1);
-
-            auto* thread = QThread::create([this, dlg, breathe]() {
-                AudioEngine::generateWisdom([dlg, breathe](int step, int total, const std::string& desc) {
-                    int pct = total > 0 ? (step * 100 / total) : 0;
-                    QString d = QString::fromStdString(desc);
-                    QMetaObject::invokeMethod(dlg, [dlg, breathe, pct, d]() {
-                        if (!d.isEmpty()) {
-                            dlg->setLabelText(d + "\n\n"
-                                "This window will automatically close when wisdom generation is complete.");
-                            if (dlg->value() >= 90 && breathe->state() != QAbstractAnimation::Running)
-                                breathe->start();
-                        } else {
-                            dlg->setValue(pct);
-                        }
-                    });
-                });
-            });
-            connect(thread, &QThread::finished, this, [this, dlg, breathe, thread]() {
-                breathe->stop();
-                dlg->setWindowOpacity(1.0);
-                dlg->setValue(100);
-                dlg->setLabelText("Wisdom generation complete!");
-                QTimer::singleShot(800, this, [this, dlg, thread]() {
-                    dlg->close();
-                    dlg->deleteLater();
-                    thread->deleteLater();
-                    m_audio.setNr2Enabled(true);
-                });
-            });
-            thread->start();
-        } else {
-            m_audio.setNr2Enabled(true);
-        }
+        enableNr2WithWisdom();
     });
 
     // RN2 toggle
@@ -2389,6 +2332,68 @@ void MainWindow::wireActiveVfoSignals(VfoWidget* w)
         if (on) activateRADE(sliceId); else deactivateRADE();
     });
 #endif
+}
+
+void MainWindow::enableNr2WithWisdom()
+{
+    if (AudioEngine::needsWisdomGeneration()) {
+        auto* dlg = new QProgressDialog(
+            "Optimizing FFT plans for NR2...\n\n"
+            "This window will automatically close when wisdom generation is complete.",
+            QString(), 0, 100, this);
+        dlg->setWindowTitle("AetherSDR — FFTW Wisdom");
+        dlg->setWindowModality(Qt::ApplicationModal);
+        dlg->setMinimumDuration(0);
+        dlg->setAutoClose(false);
+        dlg->setAutoReset(false);
+        dlg->setCancelButton(nullptr);
+        dlg->setMinimumWidth(500);
+        dlg->setStyleSheet(
+            "QProgressBar { text-align: center; font-size: 13px;"
+            " font-weight: bold; color: #c8d8e8;"
+            " background: #1a2a3a; border: 1px solid #2e4e6e; border-radius: 3px; }"
+            "QProgressBar::chunk { background: #00b4d8; }");
+        dlg->show();
+
+        auto* breathe = new QPropertyAnimation(dlg, "windowOpacity", dlg);
+        breathe->setDuration(1500);
+        breathe->setStartValue(1.0);
+        breathe->setKeyValueAt(0.5, 0.55);
+        breathe->setEndValue(1.0);
+        breathe->setLoopCount(-1);
+
+        auto* thread = QThread::create([this, dlg, breathe]() {
+            AudioEngine::generateWisdom([dlg, breathe](int step, int total, const std::string& desc) {
+                int pct = total > 0 ? (step * 100 / total) : 0;
+                QString d = QString::fromStdString(desc);
+                QMetaObject::invokeMethod(dlg, [dlg, breathe, pct, d]() {
+                    if (!d.isEmpty()) {
+                        dlg->setLabelText(d + "\n\n"
+                            "This window will automatically close when wisdom generation is complete.");
+                        if (dlg->value() >= 90 && breathe->state() != QAbstractAnimation::Running)
+                            breathe->start();
+                    } else {
+                        dlg->setValue(pct);
+                    }
+                });
+            });
+        });
+        connect(thread, &QThread::finished, this, [this, dlg, breathe, thread]() {
+            breathe->stop();
+            dlg->setWindowOpacity(1.0);
+            dlg->setValue(100);
+            dlg->setLabelText("Wisdom generation complete!");
+            QTimer::singleShot(800, this, [this, dlg, thread]() {
+                dlg->close();
+                dlg->deleteLater();
+                thread->deleteLater();
+                m_audio.setNr2Enabled(true);
+            });
+        });
+        thread->start();
+    } else {
+        m_audio.setNr2Enabled(true);
+    }
 }
 
 SpectrumWidget* MainWindow::spectrum() const

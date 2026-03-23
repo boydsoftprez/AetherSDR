@@ -76,6 +76,7 @@ private:
     SpectrumWidget* spectrumForSlice(SliceModel* s) const;
     void wireVfoWidget(VfoWidget* w, SliceModel* s);
     void wireActiveVfoSignals(VfoWidget* w);
+    void enableNr2WithWisdom();  // Wisdom-gated NR2 enable (shared by VFO + overlay)
 
     BandSnapshot captureCurrentBandState() const;
     void restoreBandState(const BandSnapshot& snap);
