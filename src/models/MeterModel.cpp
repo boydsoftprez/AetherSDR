@@ -16,9 +16,9 @@ void MeterModel::defineMeter(const MeterDef& def)
     // Cache indices for high-frequency lookups
     if (def.source == "SLC" && def.name == "LEVEL")
         m_sLevelIdxBySlice[def.sourceIndex] = def.index;
-    else if (def.name == "FWDPWR")
+    else if (def.source == "TX" && def.name == "FWDPWR")
         m_fwdPwrIdx = def.index;
-    else if (def.name == "SWR")
+    else if (def.source == "TX" && def.name == "SWR")
         m_swrIdx = def.index;
     else if (def.name == "MICPEAK")
         m_micPeakIdx = def.index;
