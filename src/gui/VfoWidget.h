@@ -172,6 +172,9 @@ private:
     QLabel*  m_shiftLabel{nullptr};
     // Mode tab
     QComboBox* m_modeCombo{nullptr};
+    QPushButton* m_quickModeBtns[3]{};
+    QString      m_quickModeAssign[3];  // e.g. "USB", "CW", "SSB", "DIG"
+    void updateQuickModeButtons();
     QGridLayout* m_filterGrid{nullptr};
     QVector<QPushButton*> m_filterBtns;
     QVector<int> m_filterWidths;

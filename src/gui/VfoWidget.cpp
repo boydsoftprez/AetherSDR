@@ -965,18 +965,62 @@ void VfoWidget::buildTabContent()
                 m_slice->setMode(mode);
         });
 
-        // Top row: dropdown + 3 quick-mode buttons (USB, CW, AM)
-        // All 4 columns equal width using a grid row
+        // Top row: dropdown + 3 configurable quick-mode buttons
+        // Right-click any button to reassign its mode.
+        // SSB toggles USB↔LSB; DIG toggles DIGU↔DIGL.
+        auto& settings = AppSettings::instance();
+        m_quickModeAssign[0] = settings.value("ModeButton0", "USB").toString();
+        m_quickModeAssign[1] = settings.value("ModeButton1", "CW").toString();
+        m_quickModeAssign[2] = settings.value("ModeButton2", "AM").toString();
+
         auto* modeRow = new QHBoxLayout;
         modeRow->setSpacing(2);
         modeRow->addWidget(m_modeCombo, 1);
-        for (const char* mode : {"USB", "CW", "AM"}) {
-            auto* btn = new QPushButton(mode);
+        for (int i = 0; i < 3; ++i) {
+            auto* btn = new QPushButton(m_quickModeAssign[i]);
+            btn->setCheckable(true);
             btn->setFixedHeight(26);
             btn->setStyleSheet(kModeBtn);
-            connect(btn, &QPushButton::clicked, this, [this, m = QString(mode)] {
-                if (m_slice) m_slice->setMode(m);
+            m_quickModeBtns[i] = btn;
+
+            connect(btn, &QPushButton::clicked, this, [this, i] {
+                if (!m_slice) return;
+                const QString& assign = m_quickModeAssign[i];
+                if (assign == "SSB") {
+                    m_slice->setMode(m_slice->mode() == "USB" ? "LSB" : "USB");
+                } else if (assign == "DIG") {
+                    m_slice->setMode(m_slice->mode() == "DIGU" ? "DIGL" : "DIGU");
+                } else {
+                    m_slice->setMode(assign);
+                }
             });
+
+            // Right-click context menu to reassign
+            btn->setContextMenuPolicy(Qt::CustomContextMenu);
+            connect(btn, &QPushButton::customContextMenuRequested, this, [this, i, btn](const QPoint& pos) {
+                QMenu menu;
+                for (const char* m : {"USB", "LSB", "SSB", "CW", "AM", "SAM",
+                                      "FM", "NFM", "DFM", "RTTY", "DIGU", "DIGL", "DIG"}) {
+                    menu.addAction(m, [this, i, m] {
+                        m_quickModeAssign[i] = m;
+                        AppSettings::instance().setValue(
+                            QString("ModeButton%1").arg(i), m);
+                        AppSettings::instance().save();
+                        updateQuickModeButtons();
+                    });
+                }
+#ifdef HAVE_RADE
+                menu.addAction("RADE", [this, i] {
+                    m_quickModeAssign[i] = "RADE";
+                    AppSettings::instance().setValue(
+                        QString("ModeButton%1").arg(i), "RADE");
+                    AppSettings::instance().save();
+                    updateQuickModeButtons();
+                });
+#endif
+                menu.exec(btn->mapToGlobal(pos));
+            });
+
             modeRow->addWidget(btn, 1);
         }
         vb->addLayout(modeRow);
@@ -1892,9 +1936,38 @@ void VfoWidget::updateModeTab()
         if (idx >= 0) m_modeCombo->setCurrentIndex(idx);
     }
 
+    // Update quick-mode button labels and active state
+    updateQuickModeButtons();
+
     // Rebuild filter presets for new mode
     m_filterWidths = filterPresetsFor(cur).filterWidths;
     rebuildFilterButtons();
+}
+
+void VfoWidget::updateQuickModeButtons()
+{
+    const QString cur = m_slice ? m_slice->mode() : QString();
+
+    for (int i = 0; i < 3; ++i) {
+        if (!m_quickModeBtns[i]) continue;
+        const QString& assign = m_quickModeAssign[i];
+
+        // Determine label and active state
+        QString label = assign;
+        bool active = false;
+        if (assign == "SSB") {
+            label = (cur == "LSB") ? "LSB" : "USB";
+            active = (cur == "USB" || cur == "LSB");
+        } else if (assign == "DIG") {
+            label = (cur == "DIGL") ? "DIGL" : "DIGU";
+            active = (cur == "DIGU" || cur == "DIGL");
+        } else {
+            active = (cur == assign);
+        }
+
+        m_quickModeBtns[i]->setText(label);
+        m_quickModeBtns[i]->setChecked(active);
+    }
 }
 
 QString VfoWidget::formatFilterLabel(int hz)
