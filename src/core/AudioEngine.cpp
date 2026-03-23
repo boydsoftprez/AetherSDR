@@ -490,13 +490,11 @@ void AudioEngine::onTxAudioReady()
         const int16_t* pcm = reinterpret_cast<const int16_t*>(m_txAccumulator.constData());
 
         // Convert int16 stereo → float32 stereo (128 pairs = 256 floats)
-        // Apply +24 dB gain: USB mic input levels are typically -20 to -30 dBFS,
-        // but SmartSDR expects near full-scale float audio on the DAX TX stream.
-        // Without this gain, SSB voice output is barely audible.
-        constexpr float TX_GAIN = 16.0f;
+        // No client-side gain — the radio handles mic level via mic_level
+        // and mic_boost settings. Sending at native level prevents clipping.
         float floatBuf[TX_SAMPLES_PER_PACKET * 2];
         for (int i = 0; i < TX_SAMPLES_PER_PACKET * 2; ++i)
-            floatBuf[i] = std::clamp(pcm[i] / 32768.0f * TX_GAIN, -1.0f, 1.0f);
+            floatBuf[i] = pcm[i] / 32768.0f;
 
         // Build VITA-49 packet and send via registered UDP socket
         QByteArray packet = buildVitaTxPacket(floatBuf, TX_SAMPLES_PER_PACKET);
