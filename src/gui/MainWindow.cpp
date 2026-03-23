@@ -103,18 +103,7 @@ MainWindow::MainWindow(QWidget* parent)
         if (m_titleBar) m_titleBar->onHeartbeatLost();
     });
 
-    auto heartbeatSlot = [this](const RadioInfo& info) {
-        const QString connSerial = AppSettings::instance()
-            .value("LastConnectedRadioSerial").toString();
-        if (!connSerial.isEmpty() && info.serial == connSerial && m_titleBar) {
-            m_titleBar->onHeartbeat();
-            m_heartbeatMissTimer->start(); // reset miss timer
-        }
-    };
-    connect(&m_discovery, &RadioDiscovery::radioDiscovered, this, heartbeatSlot);
-    connect(&m_discovery, &RadioDiscovery::radioUpdated, this, heartbeatSlot);
-
-    // Ping-based heartbeat for routed/SmartLink (no UDP discovery available)
+    // Ping-based heartbeat — covers local, routed, and SmartLink connections
     connect(&m_radioModel, &RadioModel::pingReceived, this, [this]() {
         if (m_titleBar) {
             m_titleBar->onHeartbeat();
