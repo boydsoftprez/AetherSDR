@@ -497,16 +497,8 @@ MainWindow::MainWindow(QWidget* parent)
                 { QSignalBlocker sb(btn); btn->setChecked(on); }
         }
     };
-    connect(&m_audio, &AudioEngine::nr2EnabledChanged, this, [this, syncNr2](bool on) {
-        syncNr2(on);
-        AppSettings::instance().setValue("ClientNr2Enabled", on ? "True" : "False");
-        AppSettings::instance().save();
-    });
-    connect(&m_audio, &AudioEngine::rn2EnabledChanged, this, [this, syncRn2](bool on) {
-        syncRn2(on);
-        AppSettings::instance().setValue("ClientRn2Enabled", on ? "True" : "False");
-        AppSettings::instance().save();
-    });
+    connect(&m_audio, &AudioEngine::nr2EnabledChanged, this, syncNr2);
+    connect(&m_audio, &AudioEngine::rn2EnabledChanged, this, syncRn2);
     // NR2/RN2 overlay sync is wired in wirePanadapter()
     // RxApplet NR button 3-state cycle → NR2 enable/disable
     connect(m_appletPanel->rxApplet(), &RxApplet::nr2CycleToggled,
@@ -835,6 +827,10 @@ void MainWindow::closeEvent(QCloseEvent* event)
         s.setValue("LastMode", sl->mode());
         s.setValue("LastDaxChannel", QString::number(sl->daxChannel()));
     }
+
+    // Save client-side DSP state before destructor disables them
+    s.setValue("ClientNr2Enabled", m_audio.nr2Enabled() ? "True" : "False");
+    s.setValue("ClientRn2Enabled", m_audio.rn2Enabled() ? "True" : "False");
 
     s.save();
     m_discovery.stopListening();
