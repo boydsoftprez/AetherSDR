@@ -1052,12 +1052,16 @@ void RadioModel::onStatusReceived(const QString& object,
             }
 
             if (!m_panadapters.contains(panId)) {
-                // Claim this pan only if it belongs to us
-                if (kvs.contains("client_handle")) {
-                    quint32 owner = kvs["client_handle"].toUInt(nullptr, 16);
-                    if (owner != clientHandle())
-                        return;  // not our panadapter, ignore
-                }
+                // Only create PanadapterModel when client_handle is present
+                // AND matches our handle. Early status messages may arrive
+                // without client_handle — defer until ownership is confirmed.
+                // This prevents briefly adopting another Multi-Flex client's pan.
+                if (!kvs.contains("client_handle"))
+                    return;  // defer — can't confirm ownership yet
+                quint32 owner = kvs["client_handle"].toUInt(nullptr, 16);
+                if (owner != clientHandle())
+                    return;  // not our panadapter, ignore
+
                 auto* pan = new PanadapterModel(panId, this);
                 pan->setClientHandle(QString::number(clientHandle(), 16));
                 m_panadapters[panId] = pan;
@@ -1066,8 +1070,6 @@ void RadioModel::onStatusReceived(const QString& object,
                 updateStreamFilters();
                 qCDebug(lcProtocol) << "RadioModel: claimed panadapter" << panId;
                 emit panadapterAdded(pan);
-            } else if (!m_panadapters.contains(panId)) {
-                return;  // not our panadapter, ignore
             }
         }
         handlePanadapterStatus(kvs);
@@ -1082,18 +1084,15 @@ void RadioModel::onStatusReceived(const QString& object,
         if (m.hasMatch()) {
             const QString wfId = m.captured(1);
             if (activeWfId().isEmpty()) {
-                if (kvs.contains("client_handle")) {
-                    quint32 owner = kvs["client_handle"].toUInt(nullptr, 16);
-                    if (owner == clientHandle()) {
-                        setActiveWfId(wfId);
-                        updateStreamFilters();
-                        qCDebug(lcProtocol) << "RadioModel: claimed waterfall" << activeWfId();
-                    } else {
-                        return;  // not our waterfall
-                    }
-                } else {
-                    setActiveWfId(wfId);
-                }
+                // Only claim waterfall when client_handle confirms ownership
+                if (!kvs.contains("client_handle"))
+                    return;  // defer — can't confirm ownership yet
+                quint32 owner = kvs["client_handle"].toUInt(nullptr, 16);
+                if (owner != clientHandle())
+                    return;  // not our waterfall
+                setActiveWfId(wfId);
+                updateStreamFilters();
+                qCDebug(lcProtocol) << "RadioModel: claimed waterfall" << activeWfId();
             } else if (wfId != activeWfId()) {
                 return;  // not our waterfall
             }

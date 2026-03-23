@@ -1261,6 +1261,7 @@ void MainWindow::buildUI()
         "border: 1px solid rgba(255,255,255,128); padding: 2px 12px; }");
     m_stationNickLabel->setAlignment(Qt::AlignCenter);
     m_stationNickLabel->setCursor(Qt::PointingHandCursor);
+    m_stationNickLabel->setToolTip("Double-click to connect/disconnect");
     m_stationNickLabel->installEventFilter(this);
     hbox->addWidget(m_stationNickLabel);
     m_stationLabel = m_stationNickLabel;  // alias for existing references
