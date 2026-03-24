@@ -2584,14 +2584,9 @@ void MainWindow::wirePanadapter(PanadapterApplet* applet)
             // Tune this pan's slice and recenter the pan on the new frequency
             if (m_panStack && m_panStack->count() > 1 && !applet->panId().isEmpty()
                 && applet->panId() != "default") {
+                // Use slice tune on the specific slice — this auto-recenters the pan
                 m_radioModel.sendCommand(
-                    QString("slice m %1 pan=%2").arg(recallFreq, 0, 'f', 6).arg(applet->panId()));
-                // Defer pan recenter — radio needs time to process band change
-                const QString panId = applet->panId();
-                QTimer::singleShot(200, this, [this, panId, recallFreq]() {
-                    m_radioModel.sendCommand(
-                        QString("display pan set %1 center=%2").arg(panId).arg(recallFreq, 0, 'f', 6));
-                });
+                    QString("slice tune %1 %2").arg(s->sliceId()).arg(recallFreq, 0, 'f', 6));
             } else {
                 onFrequencyChanged(recallFreq);
             }
@@ -2687,12 +2682,7 @@ void MainWindow::wirePanadapter(PanadapterApplet* applet)
             if (m_panStack && m_panStack->count() > 1 && !applet->panId().isEmpty()
                 && applet->panId() != "default") {
                 m_radioModel.sendCommand(
-                    QString("slice m %1 pan=%2").arg(freqMhz, 0, 'f', 6).arg(applet->panId()));
-                const QString panId2 = applet->panId();
-                QTimer::singleShot(200, this, [this, panId2, freqMhz]() {
-                    m_radioModel.sendCommand(
-                        QString("display pan set %1 center=%2").arg(panId2).arg(freqMhz, 0, 'f', 6));
-                });
+                    QString("slice tune %1 %2").arg(s->sliceId()).arg(freqMhz, 0, 'f', 6));
             } else {
                 onFrequencyChanged(freqMhz);
             }
