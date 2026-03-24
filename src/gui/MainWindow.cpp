@@ -2399,35 +2399,30 @@ void MainWindow::wirePanadapter(PanadapterApplet* applet)
         }
 
         if (!panId.isEmpty()) {
-            // Activate the slice on this pan (client-side only — no active=1 sent)
+            // Check if we need to switch pans
+            bool switchedPan = false;
             for (auto* s : m_radioModel.slices()) {
                 if (s->panId() == panId && s->sliceId() != m_activeSliceId) {
                     setActiveSlice(s->sliceId());
+                    switchedPan = true;
                     break;
                 }
             }
-            m_panStack->setActivePan(panId);
+            if (switchedPan)
+                m_panStack->setActivePan(panId);
 
-            // Send "slice m <freq> pan=<panId>" — radio tunes the correct slice
-            // Radio status echo will update SliceModel::frequency via applyStatus
-            if (auto* s = activeSlice(); s && !s->isLocked()) {
-                m_radioModel.sendCommand(
-                    QString("slice m %1 pan=%2").arg(mhz, 0, 'f', 6).arg(panId));
-                sw->setVfoFrequency(mhz);  // immediate visual feedback
-                // Update overlay freq so scroll-to-tune uses the new base
-                sw->setSliceOverlayFreq(s->sliceId(), mhz);
-
-                // The radio drops FPS on the non-active pan after slice m.
-                // Restore FPS on all pans to prevent waterfall slowdown.
-                QTimer::singleShot(200, this, [this]() {
-                    for (auto* pan : m_radioModel.panadapters()) {
-                        m_radioModel.sendCommand(
-                            QString("display pan set %1 fps=25").arg(pan->panId()));
-                    }
-                });
+            // Use slice m with pan= for cross-pan tuning,
+            // standard onFrequencyChanged for same-pan (updates model immediately)
+            if (switchedPan) {
+                if (auto* s = activeSlice(); s && !s->isLocked()) {
+                    m_radioModel.sendCommand(
+                        QString("slice m %1 pan=%2").arg(mhz, 0, 'f', 6).arg(panId));
+                    sw->setVfoFrequency(mhz);
+                }
+            } else {
+                onFrequencyChanged(mhz);
             }
         } else {
-            // Fallback: single pan or panId not found — use legacy path
             onFrequencyChanged(mhz);
         }
     });
