@@ -1870,6 +1870,13 @@ void MainWindow::onSliceAdded(SliceModel* s)
     // Push overlay for this slice to the spectrum widget
     pushSliceOverlay(s);
 
+    // Set the panadapter applet's slice label (e.g. "Slice B") based on
+    // which pan this slice belongs to
+    if (m_panStack && !s->panId().isEmpty()) {
+        if (auto* applet = m_panStack->panadapter(s->panId()))
+            applet->setSliceId(s->sliceId());
+    }
+
     // Set initial hasTxSlice for waterfall freeze logic
     if (s->isTxSlice())
         spectrumForSlice(s)->setHasTxSlice(true);
@@ -2476,7 +2483,7 @@ void MainWindow::wirePanadapter(PanadapterApplet* applet)
 
     // ── Band selection ───────────────────────────────────────────────────
     connect(menu, &SpectrumOverlayMenu::bandSelected,
-            this, [this](const QString& bandName, double freqMhz, const QString& mode) {
+            this, [this, applet](const QString& bandName, double freqMhz, const QString& mode) {
         // Guard against double-fire from multiple pan overlays
         if (bandName == m_bandSettings.currentBand()) return;
 
@@ -2484,7 +2491,13 @@ void MainWindow::wirePanadapter(PanadapterApplet* applet)
                  << "freq:" << freqMhz << "mode:" << mode;
 
         auto& settings = AppSettings::instance();
-        auto* s = activeSlice();
+
+        // Find the slice that belongs to THIS pan, not the global active slice
+        SliceModel* s = nullptr;
+        for (auto* sl : m_radioModel.slices()) {
+            if (sl->panId() == applet->panId()) { s = sl; break; }
+        }
+        if (!s) s = activeSlice();  // fallback
 
         // ── Save current band state before switching ──────────────────
         if (s) {
