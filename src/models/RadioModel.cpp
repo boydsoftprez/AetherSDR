@@ -67,6 +67,9 @@ RadioModel::RadioModel(QObject* parent)
     connect(&m_tnfModel, &TnfModel::commandReady, this, [this](const QString& cmd){
         sendCmd(cmd);
     });
+    connect(&m_cwxModel, &CwxModel::commandReady, this, [this](const QString& cmd){
+        sendCmd(cmd);
+    });
 
     // ── Tune PA inhibit: restore ACC TX when tune completes ──
     connect(&m_transmitModel, &TransmitModel::tuneChanged, this, [this](bool tuning) {
@@ -1411,6 +1414,12 @@ void RadioModel::onStatusReceived(const QString& object,
                 m_spotModel.applySpotStatus(idx, kvs);
             }
         }
+        return;
+    }
+
+    // CWX status: "cwx sent=0", "cwx wpm=20", "cwx macro1=CQ\u007fCQ"
+    if (object == "cwx") {
+        m_cwxModel.applyStatus(kvs);
         return;
     }
 

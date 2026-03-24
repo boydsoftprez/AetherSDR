@@ -11,6 +11,7 @@
 #include "EqualizerModel.h"
 #include "TnfModel.h"
 #include "SpotModel.h"
+#include "CwxModel.h"
 
 #include <QObject>
 #include <QString>
@@ -73,6 +74,7 @@ public:
     EqualizerModel*   equalizerModel() { return &m_equalizerModel; }
     TnfModel*         tnfModel()       { return &m_tnfModel; }
     SpotModel*        spotModel()      { return &m_spotModel; }
+    CwxModel*         cwxModel()       { return &m_cwxModel; }
     bool              hasAmplifier() const { return m_hasAmplifier; }
 
     // Getters
@@ -308,6 +310,7 @@ private:
     EqualizerModel   m_equalizerModel;
     TnfModel         m_tnfModel;
     SpotModel        m_spotModel;
+    CwxModel         m_cwxModel;
 
     QString     m_name;
     QString     m_model;

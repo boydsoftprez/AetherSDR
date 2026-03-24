@@ -1,0 +1,152 @@
+#include "CwxModel.h"
+#include <QDebug>
+#include <QMap>
+
+namespace AetherSDR {
+
+CwxModel::CwxModel(QObject* parent)
+    : QObject(parent)
+{}
+
+QString CwxModel::macro(int idx) const
+{
+    if (idx < 0 || idx >= 12) return {};
+    return m_macros[idx];
+}
+
+void CwxModel::send(const QString& text)
+{
+    if (text.isEmpty()) return;
+    // Encode spaces as DEL (0x7f) per FlexLib protocol
+    QString encoded = text;
+    encoded.replace(' ', QChar(0x7f));
+    emit commandReady(QString("cwx send \"%1\" %2").arg(encoded).arg(m_nextBlock++));
+}
+
+void CwxModel::sendChar(const QString& ch)
+{
+    if (ch.isEmpty()) return;
+    QString encoded = ch;
+    encoded.replace(' ', QChar(0x7f));
+    emit commandReady(QString("cwx send \"%1\" %2").arg(encoded).arg(m_nextBlock++));
+}
+
+void CwxModel::sendMacro(int idx)
+{
+    if (idx < 1 || idx > 12) return;
+    emit commandReady(QString("cwx macro send %1").arg(idx));
+}
+
+void CwxModel::saveMacro(int idx, const QString& text)
+{
+    if (idx < 0 || idx >= 12) return;
+    m_macros[idx] = text;
+    QString encoded = text;
+    encoded.replace(' ', QChar(0x7f));
+    emit commandReady(QString("cwx macro save %1 \"%2\"").arg(idx + 1).arg(encoded));
+}
+
+void CwxModel::erase(int numChars)
+{
+    emit commandReady(QString("cwx erase %1").arg(numChars));
+}
+
+void CwxModel::clearBuffer()
+{
+    emit commandReady("cwx clear");
+}
+
+void CwxModel::setSpeed(int wpm)
+{
+    wpm = qBound(5, wpm, 100);
+    if (wpm != m_speed) {
+        m_speed = wpm;
+        emit commandReady(QString("cwx wpm %1").arg(m_speed));
+        emit speedChanged(m_speed);
+    }
+}
+
+void CwxModel::setDelay(int ms)
+{
+    ms = qBound(0, ms, 2000);
+    if (ms != m_delay) {
+        m_delay = ms;
+        emit commandReady(QString("cwx delay %1").arg(m_delay));
+        emit delayChanged(m_delay);
+    }
+}
+
+void CwxModel::setQsk(bool on)
+{
+    if (on != m_qsk) {
+        m_qsk = on;
+        emit commandReady(QString("cwx qsk_enabled %1").arg(m_qsk ? 1 : 0));
+        emit qskChanged(m_qsk);
+    }
+}
+
+void CwxModel::setLive(bool on)
+{
+    if (on != m_live) {
+        m_live = on;
+        emit liveChanged(m_live);
+    }
+}
+
+void CwxModel::applyStatus(const QMap<QString, QString>& kvs)
+{
+    for (auto it = kvs.cbegin(); it != kvs.cend(); ++it) {
+        const QString& key = it.key();
+        const QString& val = it.value();
+
+        if (key == "sent") {
+            bool ok;
+            int idx = val.toInt(&ok);
+            if (ok) {
+                m_sentIndex = idx;
+                emit charSent(idx);
+            }
+        } else if (key == "wpm") {
+            bool ok;
+            int v = val.toInt(&ok);
+            if (ok && v != m_speed) {
+                m_speed = v;
+                emit speedChanged(m_speed);
+            }
+        } else if (key == "break_in_delay") {
+            bool ok;
+            int v = val.toInt(&ok);
+            if (ok && v != m_delay) {
+                m_delay = v;
+                emit delayChanged(m_delay);
+            }
+        } else if (key == "qsk_enabled") {
+            bool on = (val == "1");
+            if (on != m_qsk) {
+                m_qsk = on;
+                emit qskChanged(m_qsk);
+            }
+        } else if (key == "erase") {
+            QStringList parts = val.split(',');
+            if (parts.size() == 2) {
+                bool ok1, ok2;
+                int start = parts[0].toInt(&ok1);
+                int stop  = parts[1].toInt(&ok2);
+                if (ok1 && ok2) emit erased(start, stop);
+            }
+        } else if (key.startsWith("macro") && key.length() > 5) {
+            bool ok;
+            int idx = key.mid(5).toInt(&ok);
+            if (ok && idx >= 1 && idx <= 12) {
+                // Decode: \u007f → space, * → =
+                QString decoded = val;
+                decoded.replace(QChar(0x7f), ' ');
+                decoded.replace('*', '=');
+                m_macros[idx - 1] = decoded;
+                emit macroChanged(idx - 1, decoded);
+            }
+        }
+    }
+}
+
+} // namespace AetherSDR

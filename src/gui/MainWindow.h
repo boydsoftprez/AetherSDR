@@ -28,6 +28,7 @@ class SpectrumWidget;
 class PanadapterApplet;
 class PanadapterStack;
 class AppletPanel;
+class CwxPanel;
 #ifdef HAVE_RADE
 class RADEEngine;
 #endif
@@ -127,6 +128,7 @@ private:
     QLabel* m_addPanLabel{nullptr};
     QLabel* m_tnfIndicator{nullptr};
     QLabel* m_cwxIndicator{nullptr};
+    CwxPanel* m_cwxPanel{nullptr};
     QLabel* m_dvkIndicator{nullptr};
     QLabel* m_fdxIndicator{nullptr};
     QLabel* m_radioInfoLabel{nullptr};

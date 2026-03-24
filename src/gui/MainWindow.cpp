@@ -23,6 +23,7 @@
 #include "NetworkDiagnosticsDialog.h"
 #include "MemoryDialog.h"
 #include "SpotSettingsDialog.h"
+#include "CwxPanel.h"
 #include "ProfileManagerDialog.h"
 #include "SupportDialog.h"
 #include "models/SliceModel.h"
@@ -901,6 +902,14 @@ bool MainWindow::eventFilter(QObject* obj, QEvent* event)
         toggleConnectionDialog();
         return true;
     }
+    if (obj == m_cwxIndicator && event->type() == QEvent::MouseButtonPress) {
+        bool show = !m_cwxPanel->isVisible();
+        m_cwxPanel->setVisible(show);
+        m_cwxIndicator->setStyleSheet(show
+            ? "QLabel { color: #00b4d8; font-weight: bold; font-size: 24px; }"
+            : "QLabel { color: rgba(255,255,255,40); font-weight: bold; font-size: 24px; }");
+        return true;
+    }
     if (obj == m_tnfIndicator && event->type() == QEvent::MouseButtonPress) {
         m_radioModel.tnfModel()->setGlobalEnabled(!m_radioModel.tnfModel()->globalEnabled());
         return true;
@@ -1364,6 +1373,11 @@ void MainWindow::buildUI()
     m_connPanel->setFixedSize(300, 420);
     m_connPanel->hide();
 
+    // CWX panel — left of spectrum, hidden by default
+    m_cwxPanel = new CwxPanel(m_radioModel.cwxModel(), splitter);
+    splitter->addWidget(m_cwxPanel);
+    m_cwxPanel->hide();
+
     // Centre — panadapter stack (one or more FFT + waterfall panes)
     m_panStack = new PanadapterStack(splitter);
     m_panApplet = m_panStack->addPanadapter("default");
@@ -1380,18 +1394,20 @@ void MainWindow::buildUI()
             this, [this](const QString& panId) {
         m_radioModel.setActivePanId(panId);
     });
-    splitter->setStretchFactor(0, 1);
+    splitter->setStretchFactor(0, 0);  // CWX panel: fixed width
+    splitter->setStretchFactor(1, 1);  // PanStack: stretch
+    splitter->setCollapsible(0, false);
 
     // Right — applet panel (includes S-Meter)
     m_appletPanel = new AppletPanel(splitter);
     splitter->addWidget(m_appletPanel);
-    splitter->setStretchFactor(1, 0);
-    splitter->setCollapsible(1, false);
+    splitter->setStretchFactor(2, 0);
+    splitter->setCollapsible(2, false);
 
-    // Set initial splitter sizes: left=260, center=stretch, right=310
+    // Set initial splitter sizes: CWX=0 (hidden), center=stretch, right=310
     // The center pane gets whatever is left after the fixed-width sidebars.
-    const int centerWidth = qMax(400, width() - 260 - 310);
-    splitter->setSizes({260, centerWidth, 310});
+    const int centerWidth = qMax(400, width() - 310);
+    splitter->setSizes({0, centerWidth, 310});
 
     // ── Status bar (SmartSDR-style, double height) ─────────────────────
     statusBar()->setFixedHeight(40);
@@ -1442,6 +1458,9 @@ void MainWindow::buildUI()
 
     m_cwxIndicator = new QLabel("CWX");
     m_cwxIndicator->setStyleSheet(greyIndLg);
+    m_cwxIndicator->setCursor(Qt::PointingHandCursor);
+    m_cwxIndicator->setToolTip("CW Keyer — click to toggle");
+    m_cwxIndicator->installEventFilter(this);
     hbox->addWidget(m_cwxIndicator);
 
     m_dvkIndicator = new QLabel("DVK");

@@ -146,6 +146,7 @@ set(MODEL_SOURCES
     src/models/EqualizerModel.cpp
     src/models/TnfModel.cpp
     src/models/SpotModel.cpp
+    src/models/CwxModel.cpp
     src/models/BandSettings.cpp
     src/models/AntennaGeniusModel.cpp
 )
@@ -160,6 +161,7 @@ set(GUI_SOURCES
     src/gui/NetworkDiagnosticsDialog.cpp
     src/gui/MemoryDialog.cpp
     src/gui/SpotSettingsDialog.cpp
+    src/gui/CwxPanel.cpp
     src/gui/ProfileManagerDialog.cpp
     src/gui/PanadapterApplet.cpp
     src/gui/PanadapterStack.cpp
