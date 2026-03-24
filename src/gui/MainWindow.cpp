@@ -2531,31 +2531,27 @@ void MainWindow::applyPanLayout(const QString& layoutId)
     auto state = std::make_shared<QStringList>(closeIds);
     auto panIds = std::make_shared<QStringList>();
 
-    // Recursive lambda: close one pan at a time, then create
-    std::function<void()> closeNext;
-    closeNext = [this, state, panIds, needed, layoutId, closeNext]() {
+    // Recursive lambda via shared_ptr to avoid capturing an uninitialized std::function
+    auto closeNext = std::make_shared<std::function<void()>>();
+    *closeNext = [this, state, panIds, needed, layoutId, closeNext]() {
         if (!state->isEmpty()) {
-            // Still have pans to close
             QString id = state->takeFirst();
             qDebug() << "applyPanLayout: closing pan" << id;
             m_radioModel.sendCmdPublic(
                 QString("display pan close %1").arg(id),
                 [this, closeNext](int, const QString&) {
-                    // Pan closed — close next
-                    QTimer::singleShot(100, this, closeNext);
+                    QTimer::singleShot(100, this, [closeNext]() { (*closeNext)(); });
                 });
         } else {
-            // All pans closed — now create new ones sequentially
             qDebug() << "applyPanLayout: all pans closed, creating" << needed << "new pans";
             createPansSequentially(layoutId, needed, panIds, 0);
         }
     };
 
     if (closeIds.isEmpty()) {
-        // No existing pans — go straight to create
         createPansSequentially(layoutId, needed, panIds, 0);
     } else {
-        closeNext();
+        (*closeNext)();
     }
 }
 
