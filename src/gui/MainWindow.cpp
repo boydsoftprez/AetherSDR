@@ -2464,10 +2464,92 @@ void MainWindow::wirePanadapter(PanadapterApplet* applet)
             this, [this](const QString& bandName, double freqMhz, const QString& mode) {
         qDebug() << "MainWindow: switching to band" << bandName
                  << "freq:" << freqMhz << "mode:" << mode;
+
+        auto& settings = AppSettings::instance();
+        auto* s = activeSlice();
+
+        // ── Save current band state before switching ──────────────────
+        if (s) {
+            const QString curBand = m_bandSettings.currentBand();
+            if (!curBand.isEmpty()) {
+                const QString pfx = "BandStack_" + curBand + "_";
+                settings.setValue(pfx + "Freq",     QString::number(s->frequency(), 'f', 6));
+                settings.setValue(pfx + "Mode",     s->mode());
+                settings.setValue(pfx + "FilterLo", QString::number(s->filterLow()));
+                settings.setValue(pfx + "FilterHi", QString::number(s->filterHigh()));
+                settings.setValue(pfx + "Step",     QString::number(
+                    spectrum() ? spectrum()->stepSize() : 100));
+                // DSP flags — save each independently
+                settings.setValue(pfx + "NR",   s->nrOn()   ? "True" : "False");
+                settings.setValue(pfx + "NB",   s->nbOn()   ? "True" : "False");
+                settings.setValue(pfx + "ANF",  s->anfOn()  ? "True" : "False");
+                settings.setValue(pfx + "NRL",  s->nrlOn()  ? "True" : "False");
+                settings.setValue(pfx + "NRS",  s->nrsOn()  ? "True" : "False");
+                settings.setValue(pfx + "RNN",  s->rnnOn()  ? "True" : "False");
+                settings.setValue(pfx + "NRF",  s->nrfOn()  ? "True" : "False");
+                settings.setValue(pfx + "ANFL", s->anflOn() ? "True" : "False");
+                settings.setValue(pfx + "ANFT", s->anftOn() ? "True" : "False");
+                settings.setValue(pfx + "APF",  s->apfOn()  ? "True" : "False");
+                // Client-side DSP
+                settings.setValue(pfx + "NR2",  m_audio.nr2Enabled() ? "True" : "False");
+                settings.setValue(pfx + "RN2",  m_audio.rn2Enabled() ? "True" : "False");
+                settings.save();
+                qDebug() << "BandStack: saved" << curBand << s->frequency() << s->mode();
+            }
+        }
+
+        // ── Switch band tracking ──────────────────────────────────────
         m_bandSettings.setCurrentBand(bandName);
-        if (auto* s = activeSlice())
-            s->setMode(mode);
-        onFrequencyChanged(freqMhz);
+
+        // ── Recall saved state or use defaults ────────────────────────
+        const QString pfx = "BandStack_" + bandName + "_";
+        const QString savedFreq = settings.value(pfx + "Freq", "").toString();
+
+        if (!savedFreq.isEmpty() && s) {
+            // Recall saved band state
+            double recallFreq = savedFreq.toDouble();
+            QString recallMode = settings.value(pfx + "Mode", mode).toString();
+            int filterLo = settings.value(pfx + "FilterLo", "").toInt();
+            int filterHi = settings.value(pfx + "FilterHi", "").toInt();
+            int step     = settings.value(pfx + "Step", "100").toInt();
+
+            s->setMode(recallMode);
+            if (filterLo != 0 || filterHi != 0)
+                s->setFilterWidth(filterLo, filterHi);
+            onFrequencyChanged(recallFreq);
+            if (spectrum()) spectrum()->setStepSize(step);
+
+            // Radio-side DSP flags
+            auto setDsp = [&](const QString& key, const QString& cmd, bool cur) {
+                bool saved = settings.value(pfx + key, cur ? "True" : "False").toString() == "True";
+                if (saved != cur)
+                    m_radioModel.sendCommand(
+                        QString("slice set %1 %2=%3").arg(s->sliceId()).arg(cmd).arg(saved ? 1 : 0));
+            };
+            setDsp("NR",   "nr",   s->nrOn());
+            setDsp("NB",   "nb",   s->nbOn());
+            setDsp("ANF",  "anf",  s->anfOn());
+            setDsp("NRL",  "nrl",  s->nrlOn());
+            setDsp("NRS",  "nrs",  s->nrsOn());
+            setDsp("RNN",  "rnnoise", s->rnnOn());
+            setDsp("NRF",  "nrf",  s->nrfOn());
+            setDsp("ANFL", "anfl", s->anflOn());
+            setDsp("ANFT", "anft", s->anftOn());
+            setDsp("APF",  "apf",  s->apfOn());
+
+            // Client-side DSP
+            bool nr2Saved = settings.value(pfx + "NR2", "False").toString() == "True";
+            bool rn2Saved = settings.value(pfx + "RN2", "False").toString() == "True";
+            if (nr2Saved != m_audio.nr2Enabled()) m_audio.setNr2Enabled(nr2Saved);
+            if (rn2Saved != m_audio.rn2Enabled()) m_audio.setRn2Enabled(rn2Saved);
+
+            qDebug() << "BandStack: recalled" << bandName << recallFreq << recallMode;
+        } else {
+            // First time on this band — use static defaults
+            if (s) s->setMode(mode);
+            onFrequencyChanged(freqMhz);
+            qDebug() << "BandStack: first visit to" << bandName << "using defaults";
+        }
     });
 
     // ── WNB / RF Gain ────────────────────────────────────────────────────
