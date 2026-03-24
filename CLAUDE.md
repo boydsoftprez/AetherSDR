@@ -514,6 +514,55 @@ FFT by `panStreamId()`.
    PanadapterApplet's overlay menu in `wirePanadapter()`, not globally in
    the constructor. Each overlay sends commands with its own panId/waterfallId.
 
+6. **Push `xpixels`/`ypixels` to each new pan on creation.** The radio
+   defaults to `xpixels=50 ypixels=20` which produces empty FFT bins.
+   Send actual widget dimensions immediately after `panadapterAdded`.
+
+7. **SmartSDR never sends `slice set <id> active=1`.** Active slice is
+   managed entirely client-side. Sending `active=1` causes the radio to
+   pause waterfall tiles on the outgoing pan for ~3-5 seconds. Don't send
+   it in multi-pan mode.
+
+8. **Use `slice m <freq> pan=<panId>` for click-to-tune** (matches SmartSDR
+   protocol). The radio routes the tune to the correct slice for that pan.
+   BUT `slice m` does NOT recenter the pan when crossing band boundaries.
+
+9. **Band changes need `slice tune` + `slice m`.** `slice tune <id> <freq>`
+   recenters the pan's FFT/waterfall on the new band. `slice m <freq>
+   pan=<panId>` updates the VFO frequency. Both are needed for a complete
+   cross-band change in multi-pan mode. In single-pan mode, use
+   `onFrequencyChanged()` which handles everything.
+
+10. **Band change handler must target the pan's slice, not `activeSlice()`.**
+    Use `sl->panId() == applet->panId()` to find the correct slice for each
+    pan's overlay. Falling back to `activeSlice()` causes all band changes
+    to affect slice A.
+
+11. **Band stack save must validate frequency vs band.** In multi-pan mode,
+    the save handler's `activeSlice()` may return a slice on a different band.
+    Use `BandSettings::bandForFrequency()` to verify the frequency belongs to
+    the band before saving. Skip the save if they don't match (prevents
+    cross-band contamination).
+
+12. **Disconnect dying pan widgets before removal.** When a pan is removed
+    (layout reduction), disconnect all signals from its SpectrumWidget and
+    OverlayMenu to MainWindow BEFORE the widget is destroyed. This prevents
+    all `wirePanadapter` lambdas from calling into dead objects. One-shot
+    global fix — covers all current and future lambdas.
+
+13. **Preamp (`pre=`) is shared antenna hardware.** When any `display pan`
+    status contains `pre=`, apply it to ALL pans sharing the same antenna,
+    not just the pan the status belongs to. Multi-Flex filtering must not
+    block preamp updates — they are SCU-level state, not per-client.
+
+14. **Filter polarity normalization.** The radio sometimes sends wrong-polarity
+    filter offsets after session restore (e.g. `filter_lo=-2700 filter_hi=0`
+    for DIGU). Normalize in `applyStatus()` based on mode: USB/DIGU/FDV must
+    have `filterLo >= 0`, LSB/DIGL must have `filterHi <= 0`.
+
+15. **`FWDPWR` meter source is `TX-` (with trailing dash), not `TX`.**
+    Use `startsWith("TX")` for matching, not exact equality.
+
 ---
 
 ## Multi-Client (Multi-Flex) Support
