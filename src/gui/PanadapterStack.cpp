@@ -100,8 +100,13 @@ void PanadapterStack::setActivePan(const QString& panId)
     if (m_activePanId == panId) return;
     m_activePanId = panId;
 
-    // Visual indicator disabled during multi-pan debugging
-    // setStyleSheet on all applets was suspected of causing waterfall pause
+    // Visual indicator: active pan gets cyan left border
+    for (auto it = m_pans.begin(); it != m_pans.end(); ++it) {
+        bool isActive = (it.key() == panId);
+        it.value()->setStyleSheet(isActive
+            ? "PanadapterApplet { border-left: 2px solid #00b4d8; }"
+            : "PanadapterApplet { border-left: 2px solid transparent; }");
+    }
 
     emit activePanChanged(panId);
 }
