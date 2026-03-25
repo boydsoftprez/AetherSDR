@@ -43,6 +43,7 @@ public:
 signals:
     void activated(const QString& panId);
     void closeRequested(const QString& panId);
+    void pitchRangeChanged(int minHz, int maxHz);
 
 protected:
     bool eventFilter(QObject* obj, QEvent* ev) override;
@@ -59,6 +60,8 @@ private:
     QSlider*      m_cwSensSlider{nullptr};
     QPushButton*  m_lockPitchBtn{nullptr};
     QPushButton*  m_lockSpeedBtn{nullptr};
+    QSlider*      m_pitchMinSlider{nullptr};
+    QSlider*      m_pitchMaxSlider{nullptr};
     float         m_cwCostThreshold{0.70f};
 };
 

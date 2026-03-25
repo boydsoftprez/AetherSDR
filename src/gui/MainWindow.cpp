@@ -536,6 +536,8 @@ MainWindow::MainWindow(QWidget* parent)
             &m_cwDecoder, &CwDecoder::lockPitch);
     connect(m_panApplet->lockSpeedButton(), &QPushButton::toggled,
             &m_cwDecoder, &CwDecoder::lockSpeed);
+    connect(m_panApplet, &PanadapterApplet::pitchRangeChanged,
+            &m_cwDecoder, &CwDecoder::setPitchRange);
 
     // ── AF gain from applet panel → radio per-slice audio_level ─────────
     connect(m_appletPanel->rxApplet(), &RxApplet::afGainChanged, this, [this](int v) {

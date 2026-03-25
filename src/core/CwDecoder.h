@@ -38,6 +38,7 @@ public:
     // Lock pitch/speed to current detected values (prevents wandering)
     void lockPitch(bool lock);
     void lockSpeed(bool lock);
+    void setPitchRange(int minHz, int maxHz);
     bool isPitchLocked() const { return m_pitchLocked; }
     bool isSpeedLocked() const { return m_speedLocked; }
 
@@ -65,6 +66,8 @@ private:
     std::atomic<float> m_speed{0};
     std::atomic<bool> m_pitchLocked{false};
     std::atomic<bool> m_speedLocked{false};
+    std::atomic<float> m_pitchRangeMin{500.0f};
+    std::atomic<float> m_pitchRangeMax{700.0f};
 };
 
 } // namespace AetherSDR

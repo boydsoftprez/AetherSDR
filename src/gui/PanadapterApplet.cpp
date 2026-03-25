@@ -115,6 +115,45 @@ PanadapterApplet::PanadapterApplet(QWidget* parent)
     m_lockSpeedBtn->setStyleSheet(m_lockPitchBtn->styleSheet());
     cwBar->addWidget(m_lockSpeedBtn);
 
+    // Pitch range sliders — constrain decoder frequency search
+    const QString rangeSliderStyle =
+        "QSlider::groove:horizontal { background: #1a2a3a; height: 4px; border-radius: 2px; }"
+        "QSlider::handle:horizontal { background: #6a8090; width: 8px; margin: -3px 0; border-radius: 4px; }";
+
+    auto* minLabel = new QLabel("Lo:");
+    minLabel->setStyleSheet("QLabel { color: #6a8090; font-size: 8px; background: transparent; }");
+    cwBar->addWidget(minLabel);
+
+    m_pitchMinSlider = new QSlider(Qt::Horizontal);
+    m_pitchMinSlider->setRange(300, 1100);  // max will be clamped by max slider
+    m_pitchMinSlider->setValue(500);
+    m_pitchMinSlider->setFixedWidth(50);
+    m_pitchMinSlider->setStyleSheet(rangeSliderStyle);
+    m_pitchMinSlider->setToolTip("Decoder pitch search minimum (Hz)");
+    cwBar->addWidget(m_pitchMinSlider);
+
+    auto* maxLabel = new QLabel("Hi:");
+    maxLabel->setStyleSheet("QLabel { color: #6a8090; font-size: 8px; background: transparent; }");
+    cwBar->addWidget(maxLabel);
+
+    m_pitchMaxSlider = new QSlider(Qt::Horizontal);
+    m_pitchMaxSlider->setRange(400, 1200);  // min will be clamped by min slider
+    m_pitchMaxSlider->setValue(700);
+    m_pitchMaxSlider->setFixedWidth(50);
+    m_pitchMaxSlider->setStyleSheet(rangeSliderStyle);
+    m_pitchMaxSlider->setToolTip("Decoder pitch search maximum (Hz)");
+    cwBar->addWidget(m_pitchMaxSlider);
+
+    // Link sliders: maintain 100 Hz minimum gap
+    connect(m_pitchMinSlider, &QSlider::valueChanged, this, [this](int v) {
+        m_pitchMaxSlider->setMinimum(v + 100);
+        emit pitchRangeChanged(v, m_pitchMaxSlider->value());
+    });
+    connect(m_pitchMaxSlider, &QSlider::valueChanged, this, [this](int v) {
+        m_pitchMinSlider->setMaximum(v - 100);
+        emit pitchRangeChanged(m_pitchMinSlider->value(), v);
+    });
+
     cwBar->addStretch();
 
     auto* clearBtn = new QPushButton("CLR");
