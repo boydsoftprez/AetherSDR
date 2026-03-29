@@ -98,6 +98,7 @@ void SpectrumWidget::loadSettings()
     m_wfAutoBlack    = s.value(settingsKey("DisplayWfAutoBlack"), "True").toString() == "True";
     m_wfLineDuration = s.value(settingsKey("DisplayWfLineDuration"), "100").toInt();
     m_showBandPlan   = s.value("ShowBandPlan", "True").toString() == "True";
+    m_singleClickTune = s.value("SingleClickTune", "False").toString() == "True";
 
     // Sync overlay menu sliders with restored settings
     if (m_overlayMenu)
@@ -571,6 +572,10 @@ void SpectrumWidget::mousePressEvent(QMouseEvent* ev)
     const int contentH = height() - chromeH;
     const int specH = static_cast<int>(contentH * m_spectrumFrac);
     const int y = static_cast<int>(ev->position().y());
+
+    // Save press position for single-click-to-tune drag threshold
+    if (ev->button() == Qt::LeftButton)
+        m_clickPressPos = ev->position().toPoint();
 
     // Click on a spot label → tune to that frequency
     if (m_showSpots && ev->button() == Qt::LeftButton) {
@@ -1070,7 +1075,35 @@ void SpectrumWidget::mouseReleaseEvent(QMouseEvent* ev)
     if (m_draggingPan) {
         m_draggingPan = false;
         setCursor(Qt::CrossCursor);
+
+        // Single-click-to-tune: if the mouse didn't move during the
+        // "pan drag", treat it as a click-to-tune instead
+        if (m_singleClickTune && ev->button() == Qt::LeftButton) {
+            QPoint delta = ev->position().toPoint() - m_clickPressPos;
+            if (delta.manhattanLength() <= 4) {
+                const int mx = static_cast<int>(ev->position().x());
+                if (mx < width() - DBM_STRIP_W) {
+                    double rawMhz = xToMhz(mx);
+                    emit frequencyClicked(snapToStep(rawMhz, m_stepHz));
+                }
+            }
+        }
         ev->accept();
+        return;
+    }
+
+    // Single-click-to-tune in FFT area (not consumed by pan drag)
+    if (m_singleClickTune && ev->button() == Qt::LeftButton) {
+        QPoint delta = ev->position().toPoint() - m_clickPressPos;
+        if (delta.manhattanLength() <= 4) {
+            const int mx = static_cast<int>(ev->position().x());
+            if (mx < width() - DBM_STRIP_W) {
+                double rawMhz = xToMhz(mx);
+                emit frequencyClicked(snapToStep(rawMhz, m_stepHz));
+                ev->accept();
+                return;
+            }
+        }
     }
 }
 

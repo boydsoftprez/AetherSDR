@@ -103,6 +103,7 @@ public:
     void setWnbActive(bool on) { m_wnbActive = on; update(); }
     void setRfGain(int gain) { m_rfGainValue = gain; update(); }
     void setShowBandPlan(bool on) { m_showBandPlan = on; update(); }
+    void setSingleClickTune(bool on) { m_singleClickTune = on; }
     bool showBandPlan() const { return m_showBandPlan; }
 
     // ── Display control setters ───────────────────────────────────────────
@@ -367,6 +368,8 @@ private:
     bool m_wnbActive{false};
     int  m_rfGainValue{0};
     bool m_showBandPlan{true};
+    bool m_singleClickTune{false};
+    QPoint m_clickPressPos;        // for single-click-to-tune drag threshold
     bool m_showTxInWaterfall{false};  // default matches radio default (off)
     bool m_hasTxSlice{false};  // true if this pan contains the TX slice
 

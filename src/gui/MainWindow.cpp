@@ -1896,6 +1896,17 @@ void MainWindow::buildMenuBar()
         AppSettings::instance().save();
     });
 
+    auto* singleClickTuneAct = viewMenu->addAction("Single-Click to Tune");
+    singleClickTuneAct->setCheckable(true);
+    singleClickTuneAct->setChecked(
+        AppSettings::instance().value("SingleClickTune", "False").toString() == "True");
+    connect(singleClickTuneAct, &QAction::toggled, this, [this](bool on) {
+        for (auto* a : m_panStack->allApplets())
+            a->spectrumWidget()->setSingleClickTune(on);
+        AppSettings::instance().setValue("SingleClickTune", on ? "True" : "False");
+        AppSettings::instance().save();
+    });
+
     // UI Scale submenu — sets QT_SCALE_FACTOR, requires restart
     auto* scaleMenu = viewMenu->addMenu("UI Scale");
     int savedScale = AppSettings::instance().value("UiScalePercent", "100").toInt();
