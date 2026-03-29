@@ -36,6 +36,7 @@ private:
     QWidget* buildAudioTab();
     QWidget* buildFiltersTab();
     QWidget* buildXvtrTab();
+    QWidget* buildUsbCablesTab();
 #ifdef HAVE_SERIALPORT
     QWidget* buildSerialTab();
 #endif

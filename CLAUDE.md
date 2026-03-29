@@ -77,6 +77,7 @@ src/
 │   ├── EqualizerModel      — 8-band EQ state for TX and RX (eq txsc / eq rxsc)
 │   ├── TunerModel          — 4o3a Tuner Genius XL state (relays, SWR, tuning)
 │   ├── TnfModel            — Tracking notch filter management (add/remove/drag)
+│   ├── UsbCableModel       — USB cable management (CAT/BCD/Bit/Passthrough)
 │   ├── BandSettings        — Per-band persistent settings
 │   └── AntennaGeniusModel  — 4o3a Antenna Genius switch state
 └── gui/

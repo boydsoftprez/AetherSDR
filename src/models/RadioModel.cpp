@@ -73,6 +73,9 @@ RadioModel::RadioModel(QObject* parent)
     connect(&m_dvkModel, &DvkModel::commandReady, this, [this](const QString& cmd){
         sendCmd(cmd);
     });
+    connect(&m_usbCableModel, &UsbCableModel::commandReady, this, [this](const QString& cmd){
+        sendCmd(cmd);
+    });
 
     // ── Tune PA inhibit: restore ACC TX when tune completes ──
     connect(&m_transmitModel, &TransmitModel::tuneChanged, this, [this](bool tuning) {
@@ -1467,6 +1470,34 @@ void RadioModel::onStatusReceived(const QString& object,
             } else {
                 m_spotModel.applySpotStatus(idx, kvs);
             }
+        }
+        return;
+    }
+
+    // USB cable status: "usb_cable FTDI-1234 type=cat enable=1 ..."
+    //                   "usb_cable FTDI-1234 bit 0 enable=1 source=active_slice ..."
+    //                   "usb_cable FTDI-1234 removed"
+    if (object.startsWith("usb_cable ")) {
+        QString rest = object.mid(10);  // after "usb_cable "
+        // Serial number is the first word
+        int spaceIdx = rest.indexOf(' ');
+        QString sn = (spaceIdx >= 0) ? rest.left(spaceIdx) : rest;
+
+        if (rest.contains("removed")) {
+            m_usbCableModel.handleRemoved(sn);
+        } else {
+            // Check for bit-level status: remaining object text is "bit <N>"
+            // The CommandParser puts extra object words before the KV split.
+            // "usb_cable FTDI-1234 bit 3" → object="usb_cable FTDI-1234 bit 3", kvs={enable=1,...}
+            QMap<QString, QString> effectiveKvs = kvs;
+            if (spaceIdx >= 0) {
+                QString afterSn = rest.mid(spaceIdx + 1).trimmed();
+                if (afterSn.startsWith("bit ")) {
+                    int bitNum = afterSn.mid(4).trimmed().toInt();
+                    effectiveKvs["_bit_number"] = QString::number(bitNum);
+                }
+            }
+            m_usbCableModel.applyStatus(sn, effectiveKvs);
         }
         return;
     }

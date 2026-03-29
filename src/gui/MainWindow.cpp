@@ -1461,7 +1461,21 @@ void MainWindow::buildMenuBar()
         MemoryDialog dlg(&m_radioModel, this);
         dlg.exec();
     });
-    settingsMenu->addAction("USB Cables...");
+    auto* usbCablesAction = settingsMenu->addAction("USB Cables...");
+    connect(usbCablesAction, &QAction::triggered, this, [this] {
+        auto* dlg = new RadioSetupDialog(&m_radioModel, &m_audio, this);
+        dlg->setAttribute(Qt::WA_DeleteOnClose);
+        // Switch to the USB Cables tab
+        if (auto* tabs = dlg->findChild<QTabWidget*>()) {
+            for (int i = 0; i < tabs->count(); ++i) {
+                if (tabs->tabText(i) == "USB Cables") {
+                    tabs->setCurrentIndex(i);
+                    break;
+                }
+            }
+        }
+        dlg->show();
+    });
     auto* spotsAction = settingsMenu->addAction("SpotHub...");
     connect(spotsAction, &QAction::triggered, this, [this] {
         DxClusterDialog dlg(m_dxCluster, m_rbnClient, m_wsjtxClient, m_potaClient,
@@ -1696,6 +1710,7 @@ void MainWindow::buildMenuBar()
     for (auto* action : settingsMenu->actions()) {
         if (!action->isSeparator() && action != radioSetup && action != chooseRadio
             && action != networkAction && action != memoryAction && action != spotsAction
+            && action != usbCablesAction
             && action != autoRigctlAction && action != autoCatAction && action != autoDaxAction) {
             connect(action, &QAction::triggered, this, [this, action] {
                 statusBar()->showMessage(action->text().remove("...") + " — not yet implemented", 3000);

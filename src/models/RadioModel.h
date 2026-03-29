@@ -13,6 +13,7 @@
 #include "SpotModel.h"
 #include "CwxModel.h"
 #include "DvkModel.h"
+#include "UsbCableModel.h"
 
 #include <QObject>
 #include <QString>
@@ -77,6 +78,7 @@ public:
     SpotModel*        spotModel()      { return &m_spotModel; }
     CwxModel*         cwxModel()       { return &m_cwxModel; }
     DvkModel*         dvkModel()       { return &m_dvkModel; }
+    UsbCableModel*    usbCableModel()  { return &m_usbCableModel; }
     bool              hasAmplifier() const { return m_hasAmplifier; }
 
     // Getters
@@ -319,6 +321,7 @@ private:
     SpotModel        m_spotModel;
     CwxModel         m_cwxModel;
     DvkModel         m_dvkModel;
+    UsbCableModel    m_usbCableModel;
 
     QString     m_name;
     QString     m_model;
