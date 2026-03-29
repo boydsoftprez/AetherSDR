@@ -1741,10 +1741,6 @@ void SpectrumWidget::drawSpotMarkers(QPainter& p, const QRect& specRect)
             if (parsed.isValid()) col = parsed;
         }
 
-        // Draw vertical tick line
-        p.setPen(QPen(QColor(col.red(), col.green(), col.blue(), 120), 1, Qt::DotLine));
-        p.drawLine(x, specRect.top(), x, specRect.bottom());
-
         // Draw callsign label
         const QString label = spot.callsign;
         const int tw = fm.horizontalAdvance(label) + 6;
@@ -1761,6 +1757,10 @@ void SpectrumWidget::drawSpotMarkers(QPainter& p, const QRect& specRect)
             overflowGroups[bin].append(spot);
             continue;
         }
+
+        // Draw vertical tick line from bottom of spectrum up to the label
+        p.setPen(QPen(QColor(col.red(), col.green(), col.blue(), 120), 1, Qt::DotLine));
+        p.drawLine(x, specRect.bottom(), x, labelRect.bottom());
 
         placed.append(labelRect);
         int mIdx = static_cast<int>(&spot - &m_spotMarkers[0]);
