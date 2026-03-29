@@ -651,11 +651,11 @@ void SpectrumOverlayMenu::buildDaxPanel()
 
     auto* iqRow = new QHBoxLayout;
     iqRow->setSpacing(4);
-    auto* iqLbl = new QLabel("DAX IQ");
+    auto* iqLbl = new QLabel("IQ Ch");
     iqLbl->setStyleSheet(kLabelStyle);
     iqRow->addWidget(iqLbl);
     m_daxIqCmb = new QComboBox;
-    m_daxIqCmb->addItems({"Off", "1", "2", "3", "4"});
+    m_daxIqCmb->addItems({"None", "1", "2", "3", "4"});
     AetherSDR::applyComboStyle(m_daxIqCmb);
     iqRow->addWidget(m_daxIqCmb, 1);
     vb->addLayout(iqRow);

@@ -3260,20 +3260,16 @@ void MainWindow::wirePanadapter(PanadapterApplet* applet)
     connect(menu, &SpectrumOverlayMenu::noiseFloorEnableChanged,
             sw, &SpectrumWidget::setNoiseFloorEnable);
 
-    // ── DAX IQ channel selector from overlay menu ────────────────────────
+    // ── DAX IQ pan routing from overlay menu ───────────────────────────
+    // The overlay controls which pan feeds which IQ channel (routing only).
+    // Stream create/destroy and rate are managed by the DIGI applet.
     connect(menu, &SpectrumOverlayMenu::daxIqChannelChanged,
-            this, [this](int channel) {
-        auto* iqModel = m_radioModel.daxIqModel();
-        if (channel == 0) {
-            // "Off" — remove all IQ streams (simplistic; could track per-pan)
-            for (int ch = 1; ch <= 4; ++ch) {
-                if (iqModel->stream(ch).exists)
-                    iqModel->removeStream(ch);
-            }
-        } else {
-            if (!iqModel->stream(channel).exists)
-                iqModel->createStream(channel);
-        }
+            this, [this, applet](int channel) {
+        auto* pan = m_radioModel.panadapter(applet->panId());
+        if (!pan || pan->waterfallId().isEmpty()) return;
+        m_radioModel.sendCommand(
+            QString("display panafall set %1 daxiq_channel=%2")
+                .arg(pan->waterfallId()).arg(channel));
     });
 
     // ── Per-pan display controls → radio commands ────────────────────────
