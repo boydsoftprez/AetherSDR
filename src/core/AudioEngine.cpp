@@ -36,6 +36,19 @@ AudioEngine::AudioEngine(QObject* parent)
             if (dev.id() == savedInId) { m_inputDevice = dev; break; }
         }
     }
+
+    // Opus TX pacing timer — sends one queued packet every 10ms for even
+    // delivery timing. Without this, QAudioSource delivers bursts of samples
+    // that get Opus-encoded and sent back-to-back, causing jitter-induced
+    // crackling on SmartLink/WAN connections.
+    m_opusTxPaceTimer = new QTimer(this);
+    m_opusTxPaceTimer->setTimerType(Qt::PreciseTimer);
+    m_opusTxPaceTimer->setInterval(10);
+    connect(m_opusTxPaceTimer, &QTimer::timeout, this, [this]() {
+        if (m_opusTxQueue.isEmpty()) return;
+        emit txPacketReady(m_opusTxQueue.takeFirst());
+    });
+    m_opusTxPaceTimer->start();
 }
 
 AudioEngine::~AudioEngine()
@@ -685,7 +698,14 @@ void AudioEngine::onTxAudioReady()
             p[4] = 0; p[5] = 0; p[6] = 0;              // timestamps (all zero)
 
             memcpy(pkt.data() + 28, opus.constData(), opus.size());
-            emit txPacketReady(pkt);
+
+            // Queue for paced delivery instead of sending immediately.
+            // The 10ms pacing timer drains one packet per tick for even
+            // timing over SmartLink/WAN. Cap queue to ~200ms to prevent
+            // runaway growth if the mic delivers faster than real-time.
+            m_opusTxQueue.append(pkt);
+            if (m_opusTxQueue.size() > 20)
+                m_opusTxQueue.removeFirst();
         }
         return;
     }
@@ -867,6 +887,7 @@ void AudioEngine::setTransmitting(bool tx)
         m_txAccumulator.clear();
         m_txFloatAccumulator.clear();
         m_daxPreTxBuffer.clear();
+        m_opusTxQueue.clear();
     }
 }
 

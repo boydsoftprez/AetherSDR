@@ -182,7 +182,9 @@ private:
     bool          m_transmitting{false}; // true when radio is in TX (MOX on)
     bool          m_opusTxEnabled{false}; // Opus TX encoding for SmartLink
     std::unique_ptr<class OpusCodec> m_opusTxCodec; // lazy-init on first TX with Opus
-    QByteArray    m_opusTxAccumulator;  // accumulate 480 stereo samples for Opus frame
+    QByteArray    m_opusTxAccumulator;  // accumulate stereo samples for Opus frame
+    QVector<QByteArray> m_opusTxQueue;  // pacing queue for even 10ms packet delivery
+    QTimer*       m_opusTxPaceTimer{nullptr};
 
     // Client-side PC mic metering (accumulated over ~50ms window)
     float         m_pcMicPeak{0.0f};
