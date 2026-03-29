@@ -380,6 +380,23 @@ if(Qt6WebSockets_FOUND)
     target_link_libraries(AetherSDR PRIVATE Qt6::WebSockets)
 endif()
 
+find_package(PkgConfig QUIET)
+if(PkgConfig_FOUND)
+    pkg_check_modules(RTMIDI rtmidi)
+endif()
+if(RTMIDI_FOUND)
+    message(STATUS "RtMidi found (${RTMIDI_VERSION}) — MIDI controller support enabled")
+    target_compile_definitions(AetherSDR PRIVATE HAVE_MIDI)
+    target_sources(AetherSDR PRIVATE
+        src/core/MidiControlManager.cpp
+        src/core/MidiSettings.cpp
+        src/gui/MidiMappingDialog.cpp)
+    target_include_directories(AetherSDR PRIVATE ${RTMIDI_INCLUDE_DIRS})
+    target_link_libraries(AetherSDR PRIVATE ${RTMIDI_LIBRARIES})
+else()
+    message(STATUS "RtMidi not found — MIDI controller support disabled")
+endif()
+
 if(PORTAUDIO_FOUND)
     target_compile_definitions(AetherSDR PRIVATE HAVE_PORTAUDIO)
     target_include_directories(AetherSDR PRIVATE ${PORTAUDIO_INCLUDE_DIRS})

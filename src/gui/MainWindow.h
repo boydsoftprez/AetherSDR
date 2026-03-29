@@ -21,6 +21,9 @@
 #include "core/SerialPortController.h"
 #include "core/FlexControlManager.h"
 #endif
+#ifdef HAVE_MIDI
+#include "core/MidiControlManager.h"
+#endif
 
 #include <QMainWindow>
 #include <QSplitter>
@@ -131,6 +134,10 @@ private:
 #ifdef HAVE_SERIALPORT
     SerialPortController m_serialPort;
     FlexControlManager   m_flexControl;
+#endif
+#ifdef HAVE_MIDI
+    MidiControlManager   m_midiControl;
+    void registerMidiParams();
 #endif
 
     // GUI — left sidebar

@@ -63,6 +63,8 @@ src/
 │   ├── VirtualAudioBridge  — macOS DAX: CoreAudio HAL plugin shared memory bridge
 │   ├── SerialPortController— USB-serial PTT/CW keying (DTR/RTS out, CTS/DSR in)
 │   ├── FlexControlManager  — FlexControl USB tuning knob (VID 0x2192, 9600 8N1)
+│   ├── MidiControlManager  — MIDI controller mapping (RtMidi, Learn mode, 50+ params)
+│   ├── MidiSettings        — Dedicated XML settings for MIDI bindings (~/.config/AetherSDR/midi.settings)
 │   ├── OpusCodec           — Opus encode/decode for SmartLink WAN audio compression
 │   ├── LogManager          — Per-module Qt Logging Categories with persistence
 │   ├── SupportBundle       — Collect logs+settings+sysinfo into tar.gz/zip for bug reports
@@ -104,6 +106,7 @@ src/
     ├── RadioSetupDialog    — Radio setup (9 tabs): Radio, Network, GPS, Audio, TX, etc.
     ├── MemoryDialog        — Memory channel manager with editable name column
     ├── ProfileManagerDialog— Global/TX/mic profile management
+    ├── MidiMappingDialog   — MIDI controller binding manager (Learn mode, profiles)
     ├── SpotSettingsDialog   — Spot/DX cluster settings
     ├── SpotHubDialog        — Unified spot manager (6 tabs: DX Cluster, RBN, WSJT-X, POTA, Spot List, Display)
     ├── SpotDensityBadge     — Clickable spot count badge with expand-to-list popup

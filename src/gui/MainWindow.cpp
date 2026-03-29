@@ -34,6 +34,10 @@
 #include "models/TunerModel.h"
 #include "models/TransmitModel.h"
 #include "models/EqualizerModel.h"
+#ifdef HAVE_MIDI
+#include "core/MidiSettings.h"
+#include "MidiMappingDialog.h"
+#endif
 
 #include <memory>
 #include <functional>
@@ -1084,6 +1088,22 @@ MainWindow::MainWindow(QWidget* parent)
     }
 #endif
 
+#ifdef HAVE_MIDI
+    // ── MIDI controller ─────────────────────────────────────────────────
+    registerMidiParams();
+    MidiSettings::instance().load();
+    // Load saved bindings
+    auto savedBindings = MidiSettings::instance().loadBindings();
+    for (const auto& b : savedBindings)
+        m_midiControl.addBinding(b);
+    // Auto-connect to last device
+    if (MidiSettings::instance().autoConnect()) {
+        QString dev = MidiSettings::instance().lastDevice();
+        if (!dev.isEmpty())
+            m_midiControl.openPortByName(dev);
+    }
+#endif
+
     // ── P/CW applet: mic meters + ALC meter + model ────────────────────────
     // Suppress radio CODEC meters when mic_selection=PC (they just show noise).
     // Client-side metering handles PC mic display below.
@@ -1541,6 +1561,13 @@ void MainWindow::buildMenuBar()
         }
         dlg->show();
     });
+#ifdef HAVE_MIDI
+    auto* midiAction = settingsMenu->addAction("MIDI Mapping...");
+    connect(midiAction, &QAction::triggered, this, [this] {
+        MidiMappingDialog dlg(&m_midiControl, this);
+        dlg.exec();
+    });
+#endif
     auto* spotsAction = settingsMenu->addAction("SpotHub...");
     connect(spotsAction, &QAction::triggered, this, [this] {
         DxClusterDialog dlg(m_dxCluster, m_rbnClient, m_wsjtxClient, m_potaClient,
@@ -1776,6 +1803,9 @@ void MainWindow::buildMenuBar()
         if (!action->isSeparator() && action != radioSetup && action != chooseRadio
             && action != networkAction && action != memoryAction && action != spotsAction
             && action != usbCablesAction
+#ifdef HAVE_MIDI
+            && action != midiAction
+#endif
             && action != autoRigctlAction && action != autoCatAction && action != autoDaxAction) {
             connect(action, &QAction::triggered, this, [this, action] {
                 statusBar()->showMessage(action->text().remove("...") + " — not yet implemented", 3000);
@@ -4251,6 +4281,212 @@ void MainWindow::stopDax()
     delete m_daxBridge;
     m_daxBridge = nullptr;
     qInfo() << "MainWindow: stopping DAX audio bridge";
+}
+#endif
+
+#ifdef HAVE_MIDI
+void MainWindow::registerMidiParams()
+{
+    using P = MidiParamType;
+    auto reg = [this](const char* id, const char* name, const char* cat,
+                      MidiParamType type, float lo, float hi,
+                      std::function<void(float)> setter,
+                      std::function<float()> getter = {}) {
+        m_midiControl.registerParam({id, name, cat, type, lo, hi, std::move(setter), std::move(getter)});
+    };
+
+    // ── RX ──────────────────────────────────────────────────────────────
+    reg("rx.afGain", "AF Gain", "RX", P::Slider, 0, 200,
+        [this](float v) { if (auto* s = activeSlice()) s->setAudioGain(v); },
+        [this]() -> float { auto* s = activeSlice(); return s ? s->audioGain() : 0; });
+
+    reg("rx.squelch", "Squelch Level", "RX", P::Slider, 0, 100,
+        [this](float v) { if (auto* s = activeSlice()) s->setSquelch(s->squelchOn(), static_cast<int>(v)); },
+        [this]() -> float { auto* s = activeSlice(); return s ? s->squelchLevel() : 0; });
+
+    reg("rx.agcThreshold", "AGC Threshold", "RX", P::Slider, 0, 100,
+        [this](float v) { if (auto* s = activeSlice()) s->setAgcThreshold(static_cast<int>(v)); },
+        [this]() -> float { auto* s = activeSlice(); return s ? s->agcThreshold() : 0; });
+
+    reg("rx.audioPan", "Audio Pan", "RX", P::Slider, 0, 100,
+        [this](float v) { if (auto* s = activeSlice()) s->setAudioPan(static_cast<int>(v)); },
+        [this]() -> float { auto* s = activeSlice(); return s ? s->audioPan() : 50; });
+
+    reg("rx.nbEnable", "Noise Blanker", "RX", P::Toggle, 0, 1,
+        [this](float v) { if (auto* s = activeSlice()) s->setNb(v > 0.5f); },
+        [this]() -> float { auto* s = activeSlice(); return s && s->nbOn() ? 1 : 0; });
+
+    reg("rx.nrEnable", "Noise Reduction", "RX", P::Toggle, 0, 1,
+        [this](float v) { if (auto* s = activeSlice()) s->setNr(v > 0.5f); },
+        [this]() -> float { auto* s = activeSlice(); return s && s->nrOn() ? 1 : 0; });
+
+    reg("rx.anfEnable", "Auto Notch", "RX", P::Toggle, 0, 1,
+        [this](float v) { if (auto* s = activeSlice()) s->setAnf(v > 0.5f); },
+        [this]() -> float { auto* s = activeSlice(); return s && s->anfOn() ? 1 : 0; });
+
+    reg("rx.squelchEnable", "Squelch Enable", "RX", P::Toggle, 0, 1,
+        [this](float v) { if (auto* s = activeSlice()) s->setSquelch(v > 0.5f, s->squelchLevel()); },
+        [this]() -> float { auto* s = activeSlice(); return s && s->squelchOn() ? 1 : 0; });
+
+    reg("rx.mute", "Audio Mute", "RX", P::Toggle, 0, 1,
+        [this](float v) { m_audio.setMuted(v > 0.5f); },
+        [this]() -> float { return m_audio.isMuted() ? 1 : 0; });
+
+    reg("rx.tuneLock", "Tune Lock", "RX", P::Toggle, 0, 1,
+        [this](float v) { if (auto* s = activeSlice()) s->setLocked(v > 0.5f); },
+        [this]() -> float { auto* s = activeSlice(); return s && s->isLocked() ? 1 : 0; });
+
+    reg("rx.ritEnable", "RIT Enable", "RX", P::Toggle, 0, 1,
+        [this](float v) { if (auto* s = activeSlice()) s->setRit(v > 0.5f, s->ritFreq()); },
+        [this]() -> float { auto* s = activeSlice(); return s && s->ritOn() ? 1 : 0; });
+
+    reg("rx.xitEnable", "XIT Enable", "RX", P::Toggle, 0, 1,
+        [this](float v) { if (auto* s = activeSlice()) s->setXit(v > 0.5f, s->xitFreq()); },
+        [this]() -> float { auto* s = activeSlice(); return s && s->xitOn() ? 1 : 0; });
+
+    reg("rx.nr2Enable", "NR2 (Spectral)", "RX", P::Toggle, 0, 1,
+        [this](float v) { m_audio.setNr2Enabled(v > 0.5f); },
+        [this]() -> float { return m_audio.nr2Enabled() ? 1 : 0; });
+
+    reg("rx.rn2Enable", "RN2 (RNNoise)", "RX", P::Toggle, 0, 1,
+        [this](float v) { m_audio.setRn2Enabled(v > 0.5f); },
+        [this]() -> float { return m_audio.rn2Enabled() ? 1 : 0; });
+
+    reg("rx.stepUp", "Step Size Up", "RX", P::Trigger, 0, 1,
+        [this](float) { if (auto* rx = m_appletPanel->rxApplet()) rx->cycleStepUp(); });
+
+    reg("rx.stepDown", "Step Size Down", "RX", P::Trigger, 0, 1,
+        [this](float) { if (auto* rx = m_appletPanel->rxApplet()) rx->cycleStepDown(); });
+
+    reg("rx.tuneKnob", "Tune Up/Down", "RX", P::Slider, 0, 127,
+        [this](float v) {
+            // Relative tuning: center = 64 (no change), < 64 = down, > 64 = up
+            auto* s = activeSlice();
+            if (!s || s->isLocked()) return;
+            int steps = static_cast<int>(v) - 64;
+            if (steps == 0) return;
+            int stepHz = spectrum() ? spectrum()->stepSize() : 100;
+            double newMhz = s->frequency() + steps * stepHz / 1e6;
+            QString panId = m_panStack ? m_panStack->activePanId() : m_radioModel.panId();
+            if (!panId.isEmpty())
+                m_radioModel.sendCommand(
+                    QString("slice m %1 pan=%2").arg(newMhz, 0, 'f', 6).arg(panId));
+            if (spectrum()) spectrum()->setVfoFrequency(newMhz);
+        });
+
+    // ── TX ──────────────────────────────────────────────────────────────
+    reg("tx.rfPower", "RF Power", "TX", P::Slider, 0, 100,
+        [this](float v) { m_radioModel.transmitModel()->setRfPower(static_cast<int>(v)); },
+        [this]() -> float { return m_radioModel.transmitModel()->rfPower(); });
+
+    reg("tx.tunePower", "Tune Power", "TX", P::Slider, 0, 100,
+        [this](float v) { m_radioModel.transmitModel()->setTunePower(static_cast<int>(v)); },
+        [this]() -> float { return m_radioModel.transmitModel()->tunePower(); });
+
+    reg("tx.mox", "MOX", "TX", P::Toggle, 0, 1,
+        [this](float v) { m_radioModel.setTransmit(v > 0.5f); },
+        [this]() -> float { return m_radioModel.transmitModel()->isMox() ? 1 : 0; });
+
+    reg("tx.tune", "TUNE", "TX", P::Toggle, 0, 1,
+        [this](float v) {
+            m_radioModel.sendCommand(QString("transmit tune %1").arg(v > 0.5f ? 1 : 0));
+        },
+        [this]() -> float { return m_radioModel.transmitModel()->isTuning() ? 1 : 0; });
+
+    reg("tx.atuStart", "ATU Start", "TX", P::Trigger, 0, 1,
+        [this](float) { m_radioModel.sendCommand("atu start"); });
+
+    // ── Phone/CW ────────────────────────────────────────────────────────
+    reg("phone.micLevel", "Mic Level", "Phone/CW", P::Slider, 0, 100,
+        [this](float v) { m_radioModel.transmitModel()->setMicLevel(static_cast<int>(v)); },
+        [this]() -> float { return m_radioModel.transmitModel()->micLevel(); });
+
+    reg("phone.monGain", "Monitor Volume", "Phone/CW", P::Slider, 0, 100,
+        [this](float v) { m_radioModel.transmitModel()->setMonGainSb(static_cast<int>(v)); },
+        [this]() -> float { return m_radioModel.transmitModel()->monGainSb(); });
+
+    reg("phone.procEnable", "Speech Processor", "Phone/CW", P::Toggle, 0, 1,
+        [this](float v) { m_radioModel.transmitModel()->setSpeechProcessorEnable(v > 0.5f); },
+        [this]() -> float { return m_radioModel.transmitModel()->speechProcessorEnable() ? 1 : 0; });
+
+    reg("phone.daxEnable", "DAX", "Phone/CW", P::Toggle, 0, 1,
+        [this](float v) { m_radioModel.transmitModel()->setDax(v > 0.5f); },
+        [this]() -> float { return m_radioModel.transmitModel()->daxOn() ? 1 : 0; });
+
+    reg("phone.monEnable", "Monitor", "Phone/CW", P::Toggle, 0, 1,
+        [this](float v) { m_radioModel.transmitModel()->setSbMonitor(v > 0.5f); },
+        [this]() -> float { return m_radioModel.transmitModel()->sbMonitor() ? 1 : 0; });
+
+    reg("phone.voxEnable", "VOX Enable", "Phone/CW", P::Toggle, 0, 1,
+        [this](float v) { m_radioModel.transmitModel()->setVoxEnable(v > 0.5f); },
+        [this]() -> float { return m_radioModel.transmitModel()->voxEnable() ? 1 : 0; });
+
+    reg("phone.voxLevel", "VOX Level", "Phone/CW", P::Slider, 0, 100,
+        [this](float v) { m_radioModel.transmitModel()->setVoxLevel(static_cast<int>(v)); },
+        [this]() -> float { return m_radioModel.transmitModel()->voxLevel(); });
+
+    reg("phone.amCarrier", "AM Carrier", "Phone/CW", P::Slider, 0, 100,
+        [this](float v) { m_radioModel.transmitModel()->setAmCarrierLevel(static_cast<int>(v)); },
+        [this]() -> float { return m_radioModel.transmitModel()->amCarrierLevel(); });
+
+    reg("cw.speed", "CW Speed", "Phone/CW", P::Slider, 5, 100,
+        [this](float v) { m_radioModel.transmitModel()->setCwSpeed(static_cast<int>(v)); },
+        [this]() -> float { return m_radioModel.transmitModel()->cwSpeed(); });
+
+    // ── EQ ──────────────────────────────────────────────────────────────
+    reg("eq.txEnable", "TX EQ Enable", "EQ", P::Toggle, 0, 1,
+        [this](float v) { m_radioModel.equalizerModel()->setTxEnabled(v > 0.5f); },
+        [this]() -> float { return m_radioModel.equalizerModel()->txEnabled() ? 1 : 0; });
+
+    reg("eq.rxEnable", "RX EQ Enable", "EQ", P::Toggle, 0, 1,
+        [this](float v) { m_radioModel.equalizerModel()->setRxEnabled(v > 0.5f); },
+        [this]() -> float { return m_radioModel.equalizerModel()->rxEnabled() ? 1 : 0; });
+
+    {
+        using B = EqualizerModel::Band;
+        static const B bands[] = {B::B63, B::B125, B::B250, B::B500, B::B1k, B::B2k, B::B4k, B::B8k};
+        static const int freqs[] = {63, 125, 250, 500, 1000, 2000, 4000, 8000};
+        static const char* names[] = {"63 Hz", "125 Hz", "250 Hz", "500 Hz",
+                                       "1 kHz", "2 kHz", "4 kHz", "8 kHz"};
+        for (int i = 0; i < 8; ++i) {
+            B band = bands[i];
+            QString id = QString("eq.band%1").arg(freqs[i]);
+            reg(id.toUtf8().constData(), names[i], "EQ", P::Slider, -10, 10,
+                [this, band](float v) { m_radioModel.equalizerModel()->setTxBand(band, static_cast<int>(v)); },
+                [this, band]() -> float { return m_radioModel.equalizerModel()->txBand(band); });
+        }
+    }
+
+    // ── Global ──────────────────────────────────────────────────────────
+    reg("global.masterVolume", "Master Volume", "Global", P::Slider, 0, 100,
+        [this](float v) { m_radioModel.sendCommand(QString("mixer lineout gain %1").arg(static_cast<int>(v))); },
+        [this]() -> float { return m_radioModel.lineoutGain(); });
+
+    reg("global.hpVolume", "Headphone Volume", "Global", P::Slider, 0, 100,
+        [this](float v) { m_radioModel.sendCommand(QString("mixer headphone gain %1").arg(static_cast<int>(v))); },
+        [this]() -> float { return m_radioModel.headphoneGain(); });
+
+    reg("global.masterMute", "Master Mute", "Global", P::Toggle, 0, 1,
+        [this](float v) { m_audio.setMuted(v > 0.5f); },
+        [this]() -> float { return m_audio.isMuted() ? 1 : 0; });
+
+    reg("global.txButton", "TX Button", "Global", P::Toggle, 0, 1,
+        [this](float v) { m_radioModel.setTransmit(v > 0.5f); },
+        [this]() -> float { return m_radioModel.transmitModel()->isMox() ? 1 : 0; });
+
+    reg("global.tnfEnable", "TNF Global", "Global", P::Toggle, 0, 1,
+        [this](float v) { m_radioModel.sendCommand(QString("radio set tnf_enabled=%1").arg(v > 0.5f ? 1 : 0)); });
+
+    reg("global.bandUp", "Band Up", "Global", P::Trigger, 0, 1,
+        [this](float) {
+            // Placeholder — band cycling requires overlay menu integration
+            qDebug() << "MIDI: Band Up triggered";
+        });
+
+    reg("global.bandDown", "Band Down", "Global", P::Trigger, 0, 1,
+        [this](float) {
+            qDebug() << "MIDI: Band Down triggered";
+        });
 }
 #endif
 
