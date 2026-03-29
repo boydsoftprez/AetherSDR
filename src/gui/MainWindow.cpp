@@ -4436,6 +4436,27 @@ void MainWindow::registerMidiParams()
     reg("cw.key", "CW Key (straight)", "Phone/CW", P::Gate, 0, 1,
         [this](float v) { m_radioModel.sendCwKey(v > 0.5f); });
 
+    // Iambic paddle: dit and dah are separate MIDI notes.
+    // The radio handles iambic A/B mode and timing — we just send both states.
+    {
+        auto dit = std::make_shared<bool>(false);
+        auto dah = std::make_shared<bool>(false);
+
+        reg("cw.dit", "CW Paddle Dit", "Phone/CW", P::Gate, 0, 1,
+            [this, dit, dah](float v) {
+                *dit = (v > 0.5f);
+                m_radioModel.sendCwPaddle(*dit, *dah);
+            },
+            [dit]() -> float { return *dit ? 1.0f : 0.0f; });
+
+        reg("cw.dah", "CW Paddle Dah", "Phone/CW", P::Gate, 0, 1,
+            [this, dit, dah](float v) {
+                *dah = (v > 0.5f);
+                m_radioModel.sendCwPaddle(*dit, *dah);
+            },
+            [dah]() -> float { return *dah ? 1.0f : 0.0f; });
+    }
+
     reg("cw.ptt", "PTT (hold)", "Phone/CW", P::Gate, 0, 1,
         [this](float v) { m_radioModel.setTransmit(v > 0.5f); });
 
