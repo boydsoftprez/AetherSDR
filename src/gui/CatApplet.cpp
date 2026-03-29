@@ -210,7 +210,6 @@ void CatApplet::buildUI()
     m_daxEnable->setStyleSheet(kGreenToggle);
     m_daxEnable->setFixedSize(60, 22);
     daxEnRow->addWidget(m_daxEnable);
-    outer->addLayout(daxEnRow);
 
     // DAX enable button → save setting + notify MainWindow
     {
@@ -287,6 +286,7 @@ void CatApplet::buildUI()
     txRow->addWidget(m_daxTxMeter, 1);
 
     outer->addLayout(txRow);
+    outer->addLayout(daxEnRow);
 
     // ── DAX IQ section ──────────────────────────────────────────────────
     {
