@@ -189,7 +189,9 @@ int RadioConnection::kernelRttMs() const
     socklen_t len = sizeof(info);
     if (getsockopt(static_cast<int>(fd), IPPROTO_TCP, TCP_CONNECTION_INFO, &info, &len) == 0)
         return static_cast<int>(info.tcpi_srtt);  // already ms on macOS
-#elif defined(Q_OS_WIN)
+#elif defined(Q_OS_WIN) && defined(SIO_TCP_INFO)
+    // SIO_TCP_INFO / TCP_INFO_v0 require Windows SDK 10.0.19041+ (MSVC only).
+    // MinGW headers do not expose these symbols — fall through to return -1.
     TCP_INFO_v0 info{};
     DWORD infoLen = sizeof(info);
     DWORD version = 0;

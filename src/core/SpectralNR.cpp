@@ -189,12 +189,12 @@ bool SpectralNR::generateWisdom(const std::string& directory,
     // This gives us a head start if Thetis is installed
 #ifdef _WIN32
     {
-        char* appData = nullptr;
-        size_t len = 0;
-        if (_dupenv_s(&appData, &len, "APPDATA") == 0 && appData) {
+        // Use getenv — standard C, works on both MSVC and MinGW.
+        // _dupenv_s is MSVC-only and not available in MinGW headers.
+        const char* appData = getenv("APPDATA");
+        if (appData) {
             std::string thetisWisdom = std::string(appData)
                 + "\\OpenHPSDR\\Thetis-x64\\wdspWisdom00";
-            free(appData);
             std::lock_guard<std::mutex> lock(s_fftwMutex);
             if (fftw_import_wisdom_from_filename(thetisWisdom.c_str())) {
                 // Save as our own so we don't depend on Thetis in future

@@ -555,11 +555,11 @@ void VfoWidget::buildTabContent()
         m_afGainSlider->setRange(0, 100);
         m_afGainSlider->setStyleSheet(kSliderStyle);
         gainRow->addWidget(m_afGainSlider, 1);
-        auto* afVal = new QLabel("0");
-        afVal->setStyleSheet(kLabelStyle);
-        afVal->setFixedWidth(20);
-        afVal->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-        gainRow->addWidget(afVal);
+        m_afGainLabel = new QLabel("0");
+        m_afGainLabel->setStyleSheet(kLabelStyle);
+        m_afGainLabel->setFixedWidth(20);
+        m_afGainLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        gainRow->addWidget(m_afGainLabel);
         vb->addLayout(gainRow);
 
         // SQL row
@@ -575,11 +575,11 @@ void VfoWidget::buildTabContent()
         m_sqlSlider->setValue(20);
         m_sqlSlider->setStyleSheet(kSliderStyle);
         sqlRow->addWidget(m_sqlSlider, 1);
-        auto* sqlVal = new QLabel("20");
-        sqlVal->setStyleSheet(kLabelStyle);
-        sqlVal->setFixedWidth(20);
-        sqlVal->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-        sqlRow->addWidget(sqlVal);
+        m_sqlLabel = new QLabel("20");
+        m_sqlLabel->setStyleSheet(kLabelStyle);
+        m_sqlLabel->setFixedWidth(20);
+        m_sqlLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        sqlRow->addWidget(m_sqlLabel);
         vb->addLayout(sqlRow);
 
         // AGC-T row: mode combo + threshold slider
@@ -597,11 +597,11 @@ void VfoWidget::buildTabContent()
         m_agcTSlider->setValue(65);
         m_agcTSlider->setStyleSheet(kSliderStyle);
         agcRow->addWidget(m_agcTSlider, 1);
-        auto* agcVal = new QLabel("65");
-        agcVal->setStyleSheet(kLabelStyle);
-        agcVal->setFixedWidth(20);
-        agcVal->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-        agcRow->addWidget(agcVal);
+        m_agcTLabel = new QLabel("65");
+        m_agcTLabel->setStyleSheet(kLabelStyle);
+        m_agcTLabel->setFixedWidth(20);
+        m_agcTLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        agcRow->addWidget(m_agcTLabel);
         vb->addLayout(agcRow);
 
         // Pan row: DIV button + L + slider (with center marker) + R
@@ -714,8 +714,8 @@ void VfoWidget::buildTabContent()
         vb->addWidget(m_escPanel);
 
         // ── Audio tab connects (all widgets now created) ──
-        connect(m_afGainSlider, &QSlider::valueChanged, this, [this, afVal](int v) {
-            afVal->setText(QString::number(v));
+        connect(m_afGainSlider, &QSlider::valueChanged, this, [this](int v) {
+            m_afGainLabel->setText(QString::number(v));
             if (!m_updatingFromModel) {
                 if (m_slice) m_slice->setAudioGain(v);
                 emit afGainChanged(v);
@@ -732,8 +732,8 @@ void VfoWidget::buildTabContent()
             if (!m_updatingFromModel && m_slice)
                 m_slice->setSquelch(on, m_sqlSlider->value());
         });
-        connect(m_sqlSlider, &QSlider::valueChanged, this, [this, sqlVal](int v) {
-            sqlVal->setText(QString::number(v));
+        connect(m_sqlSlider, &QSlider::valueChanged, this, [this](int v) {
+            m_sqlLabel->setText(QString::number(v));
             if (!m_updatingFromModel && m_slice)
                 m_slice->setSquelch(m_sqlBtn->isChecked(), v);
         });
@@ -747,8 +747,8 @@ void VfoWidget::buildTabContent()
                 m_slice->setAgcMode(mode);
             }
         });
-        connect(m_agcTSlider, &QSlider::valueChanged, this, [this, agcVal](int v) {
-            agcVal->setText(QString::number(v));
+        connect(m_agcTSlider, &QSlider::valueChanged, this, [this](int v) {
+            m_agcTLabel->setText(QString::number(v));
             if (!m_updatingFromModel && m_slice) m_slice->setAgcThreshold(v);
         });
         connect(m_panSlider, &QSlider::valueChanged, this, [this](int v) {
@@ -1450,6 +1450,7 @@ void VfoWidget::setAfGain(int pct)
     if (m_afGainSlider) {
         QSignalBlocker b(m_afGainSlider);
         m_afGainSlider->setValue(pct);
+        m_afGainLabel->setText(QString::number(pct));
     }
 }
 
@@ -1771,7 +1772,9 @@ void VfoWidget::setSlice(SliceModel* slice)
     connect(m_slice, &SliceModel::audioGainChanged, this, [this](float g) {
         m_updatingFromModel = true;
         QSignalBlocker sb(m_afGainSlider);
-        m_afGainSlider->setValue(static_cast<int>(g));
+        int af = static_cast<int>(g);
+        m_afGainSlider->setValue(af);
+        m_afGainLabel->setText(QString::number(af));
         m_updatingFromModel = false;
     });
     connect(m_slice, &SliceModel::audioMuteChanged, this, [this](bool mute) {
@@ -1878,6 +1881,7 @@ void VfoWidget::setSlice(SliceModel* slice)
         if (m_sqlBtn->isEnabled())
             m_sqlBtn->setChecked(on);
         m_sqlSlider->setValue(level);
+        m_sqlLabel->setText(QString::number(level));
         m_updatingFromModel = false;
     });
     // AGC
@@ -1895,6 +1899,7 @@ void VfoWidget::setSlice(SliceModel* slice)
         m_updatingFromModel = true;
         QSignalBlocker sb(m_agcTSlider);
         m_agcTSlider->setValue(v);
+        m_agcTLabel->setText(QString::number(v));
         m_updatingFromModel = false;
     });
     // RIT/XIT
@@ -2093,8 +2098,16 @@ void VfoWidget::syncFromSlice()
     updateModeTab();
 
     // Audio
-    m_afGainSlider->setValue(static_cast<int>(m_slice->audioGain()));
-    m_panSlider->setValue(m_slice->audioPan());
+    {
+        QSignalBlocker b(m_afGainSlider);
+        int af = static_cast<int>(m_slice->audioGain());
+        m_afGainSlider->setValue(af);
+        m_afGainLabel->setText(QString::number(af));
+    }
+    {
+        QSignalBlocker b(m_panSlider);
+        m_panSlider->setValue(m_slice->audioPan());
+    }
     {
         QSignalBlocker sb(m_muteBtn);
         bool muted = m_slice->audioMute();
@@ -2108,6 +2121,7 @@ void VfoWidget::syncFromSlice()
         QSignalBlocker b1(m_sqlBtn), b2(m_sqlSlider);
         m_sqlBtn->setChecked(m_slice->squelchOn());
         m_sqlSlider->setValue(m_slice->squelchLevel());
+        m_sqlLabel->setText(QString::number(m_slice->squelchLevel()));
     }
     {
         QSignalBlocker sb(m_agcCmb);
@@ -2120,6 +2134,7 @@ void VfoWidget::syncFromSlice()
     {
         QSignalBlocker sb(m_agcTSlider);
         m_agcTSlider->setValue(m_slice->agcThreshold());
+        m_agcTLabel->setText(QString::number(m_slice->agcThreshold()));
     }
 
     // ESC (diversity beamforming) — phase in radians, display as degrees

@@ -159,8 +159,11 @@ public:
     void setDiversityAllowed(bool allowed);
 private:
     QSlider* m_sqlSlider{nullptr};
+    QLabel*  m_afGainLabel{nullptr};
+    QLabel*  m_sqlLabel{nullptr};
     QComboBox* m_agcCmb{nullptr};
     QSlider* m_agcTSlider{nullptr};
+    QLabel*  m_agcTLabel{nullptr};
     // DSP tab
     QPushButton* m_nbBtn{nullptr};
     QPushButton* m_nrBtn{nullptr};
