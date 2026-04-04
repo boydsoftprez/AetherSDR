@@ -2,6 +2,9 @@
 #include "SpectrumOverlayMenu.h"
 #include "VfoWidget.h"
 #include "SliceColors.h"
+#ifdef HAVE_RHI
+#include "GpuSpectrumRenderer.h"
+#endif
 
 #include <QPainter>
 #include <QPainterPath>
@@ -46,6 +49,12 @@ SpectrumWidget::SpectrumWidget(QWidget* parent)
     // Floating overlay menu (child widget, stays on top)
     m_overlayMenu = new SpectrumOverlayMenu(this);
     m_overlayMenu->raise();
+
+#ifdef HAVE_RHI
+    // GPU-accelerated waterfall renderer (Phase 1: solid color proof-of-concept)
+    m_gpuRenderer = new GpuSpectrumRenderer(this);
+    m_gpuRenderer->show();
+#endif
 
     // Load display settings (panIndex 0 by default — loadSettings() can be
     // called again after setPanIndex() for multi-pan)
@@ -654,6 +663,19 @@ void SpectrumWidget::updateWaterfallRow(const QVector<float>& binsIntensity,
         }
     }
     m_prevTileScanline = scanline;
+
+#ifdef HAVE_RHI
+    // Upload the written rows to GPU texture
+    if (m_gpuRenderer && m_gpuRenderer->isReady()) {
+        // Re-read the rows we just wrote (they may be interpolated)
+        for (int r = 0; r < rowsToPush; ++r) {
+            const int rowIdx = (m_wfWriteRow + r) % h;
+            auto* rowData = reinterpret_cast<const quint32*>(bits + rowIdx * bpl);
+            m_gpuRenderer->uploadRow(rowData, rowIdx, destWidth);
+        }
+        m_gpuRenderer->setWriteRow(m_wfWriteRow);
+    }
+#endif
 
     update();
 }
@@ -1514,8 +1536,16 @@ void SpectrumWidget::resizeEvent(QResizeEvent* ev)
         m_wfWriteRow = 0;
     }
 
-    // Position GPU renderer to cover FFT + waterfall area
-
+    // Position GPU renderer to cover waterfall area and resize texture.
+    // Must match paintEvent's wfRect: Y = specH + DIVIDER_H + FREQ_SCALE_H
+#ifdef HAVE_RHI
+    if (m_gpuRenderer && wfHeight > 0 && width() > 0) {
+        const int specH = contentH - wfHeight;
+        const int wfY = specH + chromeH;  // chromeH = DIVIDER_H + FREQ_SCALE_H
+        m_gpuRenderer->setGeometry(0, wfY, width(), wfHeight);
+        m_gpuRenderer->setWaterfallSize(width(), wfHeight);
+    }
+#endif
 
     positionZoomButtons();
 }
@@ -1640,6 +1670,13 @@ void SpectrumWidget::pushWaterfallRow(const QVector<float>& bins, int destWidth,
         const float dbm = (binIdx >= 0 && binIdx < bins.size()) ? bins[binIdx] : m_wfMinDbm;
         row[x] = dbmToRgb(dbm);
     }
+
+#ifdef HAVE_RHI
+    if (m_gpuRenderer && m_gpuRenderer->isReady()) {
+        m_gpuRenderer->uploadRow(row, m_wfWriteRow, destWidth);
+        m_gpuRenderer->setWriteRow(m_wfWriteRow);
+    }
+#endif
 }
 
 // ─── Paint ────────────────────────────────────────────────────────────────────
@@ -1937,6 +1974,12 @@ void SpectrumWidget::drawSpectrum(QPainter& p, const QRect& r)
 
 void SpectrumWidget::drawWaterfall(QPainter& p, const QRect& r)
 {
+#ifdef HAVE_RHI
+    // GPU renderer handles waterfall — skip CPU blit
+    if (m_gpuRenderer && m_gpuRenderer->isReady())
+        return;
+#endif
+
     if (m_waterfall.isNull()) {
         p.fillRect(r, Qt::black);
         return;

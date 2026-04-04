@@ -161,6 +161,9 @@ else()
     endif()
 endif()
 
+# GPU-accelerated spectrum/waterfall rendering via QRhi (#391)
+option(ENABLE_RHI "Use GPU-accelerated spectrum rendering (QRhi, requires Qt 6.6+)" ON)
+
 # NVIDIA NIM BNR (Background Noise Removal) — GPU-accelerated neural denoising
 # Requires: grpc++, protobuf, NVIDIA RTX 4000+ GPU, Docker container
 option(ENABLE_BNR "Enable NVIDIA NIM BNR noise removal (requires grpc++)" OFF)
@@ -533,6 +536,15 @@ elseif(OPUS_FOUND)
     target_compile_definitions(AetherSDR PRIVATE HAVE_OPUS)
     target_include_directories(AetherSDR PRIVATE ${OPUS_INCLUDE_DIRS})
     target_link_libraries(AetherSDR PRIVATE ${OPUS_LIBRARIES})
+endif()
+
+if(ENABLE_RHI)
+    find_package(Qt6 REQUIRED COMPONENTS GuiPrivate)
+    target_compile_definitions(AetherSDR PRIVATE HAVE_RHI)
+    target_sources(AetherSDR PRIVATE
+        src/gui/GpuSpectrumRenderer.cpp)
+    target_link_libraries(AetherSDR PRIVATE Qt6::GuiPrivate)
+    message(STATUS "GPU spectrum rendering enabled (QRhi)")
 endif()
 
 if(ENABLE_BNR)

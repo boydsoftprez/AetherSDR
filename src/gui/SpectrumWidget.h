@@ -10,6 +10,7 @@
 
 namespace AetherSDR {
 
+class GpuSpectrumRenderer;
 class SpectrumOverlayMenu;
 class VfoWidget;
 
@@ -355,6 +356,9 @@ private:
     float m_wfMaxDbm{-50.0f};
 
     // Scrolling waterfall image (Format_RGB32)
+#ifdef HAVE_RHI
+    GpuSpectrumRenderer* m_gpuRenderer{nullptr};
+#endif
     QImage m_waterfall;
     int    m_wfWriteRow{0};  // ring buffer: next row to write (newest at top)
 

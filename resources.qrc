@@ -10,4 +10,8 @@
         <file alias="iaru-region2.json">resources/bandplans/iaru-region2.json</file>
         <file alias="iaru-region3.json">resources/bandplans/iaru-region3.json</file>
     </qresource>
+    <qresource prefix="/shaders">
+        <file alias="waterfall.vert.qsb">resources/shaders/waterfall.vert.qsb</file>
+        <file alias="waterfall.frag.qsb">resources/shaders/waterfall.frag.qsb</file>
+    </qresource>
 </RCC>
