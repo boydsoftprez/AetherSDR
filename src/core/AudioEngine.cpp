@@ -49,6 +49,25 @@ AudioEngine::AudioEngine(QObject* parent)
         emit txPacketReady(m_opusTxQueue.takeFirst());
     });
     m_opusTxPaceTimer->start();
+
+    // RX pacing timer -- similar to Opus logic but allows us to queue up
+    // enough buffer to prevent underruns. Also, this seems to be how QAudioSink
+    // in push mode needs to be implemented.
+    m_rxTimer = new QTimer(this);
+    m_rxTimer->setTimerType(Qt::PreciseTimer);
+    m_rxTimer->setInterval(10);
+    connect(m_rxTimer, &QTimer::timeout, this, [this]() {
+        if (!m_audioSink || !m_audioDevice || !m_audioDevice->isOpen() || m_audioSink->state() == QAudio::StoppedState) return;
+
+        qsizetype len = m_audioSink->bytesFree();
+        len = std::min(len, m_rxBuffer.size());
+        if (len > 0)
+        {
+            len = m_audioDevice->write(m_rxBuffer.left(len));
+            m_rxBuffer.remove(0, len);
+        }
+    });
+    m_rxTimer->start();
 }
 
 AudioEngine::~AudioEngine()
@@ -149,9 +168,9 @@ void AudioEngine::feedAudioData(const QByteArray& pcm)
     auto writeAudio = [this](const QByteArray& data) {
         if (!m_audioDevice || !m_audioDevice->isOpen()) return;
         if (m_resampleTo48k)
-            m_audioDevice->write(resampleStereo(data));
+            m_rxBuffer.append(resampleStereo(data));
         else
-            m_audioDevice->write(data);
+            m_rxBuffer.append(data); 
     };
 
     // Bypass client-side DSP during TX (#367). NR2/RN2/BNR adapt their
@@ -174,7 +193,7 @@ void AudioEngine::feedAudioData(const QByteArray& pcm)
         } else if (m_bnrEnabled && m_bnr && m_bnr->isConnected()) {
             processBnr(pcm);
             // processBnr writes audio and emits level internally
-        } else {
+        } else if (!m_radeMode) {
             writeAudio(pcm);
             emit levelChanged(computeRMS(pcm));
         }
@@ -207,6 +226,8 @@ void AudioEngine::generateWisdom(std::function<void(int,int,const std::string&)>
 void AudioEngine::setNr2Enabled(bool on)
 {
     if (m_nr2Enabled == on) return;
+    // RADE outputs decoded speech — client-side DSP has no effect
+    if (on && m_radeMode) return;
     std::lock_guard<std::recursive_mutex> lock(m_dspMutex);
     if (on) {
         // Disable RN2/BNR if on — they're mutually exclusive
@@ -234,6 +255,7 @@ void AudioEngine::setNr2Enabled(bool on)
 void AudioEngine::setRn2Enabled(bool on)
 {
     if (m_rn2Enabled == on) return;
+    if (on && m_radeMode) return;
     std::lock_guard<std::recursive_mutex> lock(m_dspMutex);
     if (on) {
         // Disable NR2/BNR first — they're mutually exclusive
@@ -261,6 +283,7 @@ void AudioEngine::setRn2Enabled(bool on)
 void AudioEngine::setBnrEnabled(bool on)
 {
     if (m_bnrEnabled == on) return;
+    if (on && m_radeMode) return;
     std::lock_guard<std::recursive_mutex> lock(m_dspMutex);
     if (on) {
         // Mutual exclusion with NR2 and RN2
@@ -421,9 +444,9 @@ void AudioEngine::processBnr(const QByteArray& stereoPcm)
 
         if (m_audioDevice && m_audioDevice->isOpen()) {
             if (m_resampleTo48k)
-                m_audioDevice->write(resampleStereo(chunk));
+                m_rxBuffer.append(resampleStereo(chunk));
             else
-                m_audioDevice->write(chunk);
+                m_rxBuffer.append(chunk); 
         }
         emit levelChanged(computeRMS(chunk));
     }
@@ -909,6 +932,13 @@ void AudioEngine::setInputDevice(const QAudioDevice& dev)
 void AudioEngine::setRadeMode(bool on)
 {
     m_radeMode = on;
+    // RADE outputs decoded speech — client-side DSP has no effect.
+    // Disable any active DSP when entering RADE mode.
+    if (on) {
+        if (m_nr2Enabled) setNr2Enabled(false);
+        if (m_rn2Enabled) setRn2Enabled(false);
+        if (m_bnrEnabled) setBnrEnabled(false);
+    }
 }
 
 void AudioEngine::sendModemTxAudio(const QByteArray& float32pcm)
@@ -1066,10 +1096,12 @@ void AudioEngine::feedDaxTxAudio(const QByteArray& float32pcm)
 void AudioEngine::feedDecodedSpeech(const QByteArray& pcm)
 {
     if (!m_audioSink || !m_audioDevice || !m_audioDevice->isOpen()) return;
+
+    // note: RX timer will handle actual audio device write
     if (m_resampleTo48k)
-        m_audioDevice->write(resampleStereo(pcm));
+        m_rxBuffer.append(resampleStereo(pcm));
     else
-        m_audioDevice->write(pcm);
+        m_rxBuffer.append(pcm);
 }
 
 } // namespace AetherSDR

@@ -77,6 +77,7 @@ private:
     void updateFilterButtons();
     void updateModeSettings(const QString& mode);
     void rebuildFilterButtons();
+    void saveFilterPresets();
     void rebuildStepSizes();
     void updateAgcCombo();
     void updateOffsetDirButtons();
@@ -93,7 +94,7 @@ private:
     QVector<int> m_stepSizes{10, 50, 100, 250, 500, 1000, 2500, 5000, 10000};
     int          m_stepIdx{2};          // index into m_stepSizes, default 100 Hz
     QPushButton* m_stepDown{nullptr};   // "<" button
-    QLabel*      m_stepLabel{nullptr};  // current step value display
+    ScrollableLabel* m_stepLabel{nullptr};  // current step value display
     QPushButton* m_stepUp{nullptr};     // ">" button
 
     // ── Header row ────────────────────────────────────────────────────────

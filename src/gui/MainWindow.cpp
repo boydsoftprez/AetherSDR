@@ -105,6 +105,8 @@ namespace AetherSDR {
 
 // ─── Shortcut guard (file-scope for use as std::function<bool()>) ───────────
 
+static constexpr const char* kPaTempUnitSettingKey = "PaTempDisplayUnit";
+
 static bool s_keyboardShortcutsEnabled = false;
 
 static bool isTextInputFocused()
@@ -145,6 +147,9 @@ MainWindow::MainWindow(QWidget* parent)
     buildMenuBar();
     buildUI();
     registerShortcutActions();
+    m_paTempUseFahrenheit =
+        AppSettings::instance().value(kPaTempUnitSettingKey, "Fahrenheit").toString() != "Celsius";
+    updatePaTempLabel();
 
     // DXCC spot coloring (#330)
     m_dxccProvider.loadCtyDat(":/cty.dat");
@@ -1782,6 +1787,26 @@ MainWindow::MainWindow(QWidget* parent)
     m_appletPanel->catApplet()->setRigctlServers(m_rigctlServers, kCatChannels);
     m_appletPanel->catApplet()->setRigctlPtys(m_rigctlPtys, kCatChannels);
     m_appletPanel->catApplet()->setAudioEngine(m_audio);
+#ifdef HAVE_WEBSOCKETS
+    m_tciServer = new TciServer(&m_radioModel, this);
+    m_tciServer->setAudioEngine(m_audio);
+    m_appletPanel->catApplet()->setTciServer(m_tciServer);
+
+    // Wire slice state changes → TCI broadcasts
+    connect(&m_radioModel, &RadioModel::sliceAdded, this, [this](SliceModel* s) {
+        if (m_tciServer)
+            m_tciServer->wireSlice(s->sliceId(), s);
+    });
+    m_tciServer->wireSpotModel();
+
+    // Wire RX audio from PanadapterStream → TCI server for audio streaming
+    if (m_radioModel.panStream()) {
+        connect(m_radioModel.panStream(), &PanadapterStream::audioDataReady,
+                m_tciServer, &TciServer::onRxAudioReady);
+        connect(m_radioModel.panStream(), &PanadapterStream::daxAudioReady,
+                m_tciServer, &TciServer::onDaxAudioReady);
+    }
+#endif
 
 #if defined(Q_OS_MAC) || defined(HAVE_PIPEWIRE)
     // DAX enable button in CatApplet → start/stop DAX bridge
@@ -1810,7 +1835,9 @@ MainWindow::MainWindow(QWidget* parent)
 
     connect(&m_radioModel.meterModel(), &MeterModel::hwTelemetryChanged,
             this, [this](float paTemp, float supplyVolts) {
-        m_paTempLabel->setText(QString("PA %1\u00B0C").arg(paTemp, 0, 'f', 1));
+        m_lastPaTempC = paTemp;
+        m_hasPaTempTelemetry = true;
+        updatePaTempLabel();
         m_supplyVoltLabel->setText(QString("%1 V").arg(supplyVolts, 0, 'f', 2));
 
         // Update station label (nickname arrives via status after connect)
@@ -1849,8 +1876,11 @@ MainWindow::MainWindow(QWidget* parent)
         if (!grid.isEmpty())
             m_gridLabel->setText(grid);
 
-        // Use GPS UTC time if available, otherwise system UTC
-        if (!utcTime.isEmpty()) {
+        // Use GPS UTC time only when GPSDO is installed and locked.
+        // GPS with no antenna/lock sends stale "00:00:00Z" — fall back to system clock.
+        if (!utcTime.isEmpty()
+            && m_radioModel.oscState() == "gpsdo"
+            && m_radioModel.oscLocked()) {
             m_gpsTimeLabel->setText(utcTime);
             m_useSystemClock = false;
         } else {
@@ -2072,6 +2102,10 @@ bool MainWindow::eventFilter(QObject* obj, QEvent* event)
         }
     }
 
+    if (obj == m_paTempLabel && event->type() == QEvent::MouseButtonPress) {
+        setPaTempDisplayUnit(!m_paTempUseFahrenheit);
+        return true;
+    }
     if (obj == m_networkLabel && event->type() == QEvent::MouseButtonDblClick) {
         NetworkDiagnosticsDialog dlg(&m_radioModel, this);
         dlg.exec();
@@ -2219,6 +2253,35 @@ void MainWindow::toggleConnectionDialog()
     m_connPanel->move(pos);
     m_connPanel->show();
     m_connPanel->raise();
+}
+
+void MainWindow::updatePaTempLabel()
+{
+    const QString unit = m_paTempUseFahrenheit ? "F" : "C";
+    if (!m_hasPaTempTelemetry) {
+        m_paTempLabel->setText(QString("PA --\u00B0%1").arg(unit));
+    } else if (m_paTempUseFahrenheit) {
+        const float paTempF = (m_lastPaTempC * 9.0f / 5.0f) + 32.0f;
+        m_paTempLabel->setText(QString("PA %1\u00B0F").arg(paTempF, 0, 'f', 1));
+    } else {
+        m_paTempLabel->setText(QString("PA %1\u00B0C").arg(m_lastPaTempC, 0, 'f', 1));
+    }
+
+    m_paTempLabel->setToolTip(
+        QString("PA temperature\nClick to switch to %1")
+            .arg(m_paTempUseFahrenheit ? "Celsius (\u00B0C)" : "Fahrenheit (\u00B0F)"));
+}
+
+void MainWindow::setPaTempDisplayUnit(bool useFahrenheit)
+{
+    if (m_paTempUseFahrenheit == useFahrenheit)
+        return;
+
+    m_paTempUseFahrenheit = useFahrenheit;
+    auto& settings = AppSettings::instance();
+    settings.setValue(kPaTempUnitSettingKey, useFahrenheit ? "Fahrenheit" : "Celsius");
+    settings.save();
+    updatePaTempLabel();
 }
 
 // ─── Audio thread helpers (#502) ─────────────────────────────────────────────
@@ -2722,6 +2785,28 @@ void MainWindow::buildMenuBar()
         s.save();
     });
 
+    auto* autoTciAction = settingsMenu->addAction("Autostart TCI with AetherSDR");
+    autoTciAction->setCheckable(true);
+    autoTciAction->setChecked(
+        AppSettings::instance().value("AutoStartTCI", "False").toString() == "True");
+    connect(autoTciAction, &QAction::toggled, this, [this](bool on) {
+        auto& s = AppSettings::instance();
+        s.setValue("AutoStartTCI", on ? "True" : "False");
+        s.save();
+#ifdef HAVE_WEBSOCKETS
+        if (m_tciServer) {
+            if (on && !m_tciServer->isRunning()) {
+                int port = s.value("TciPort", "50001").toInt();
+                m_tciServer->start(static_cast<quint16>(port));
+            } else if (!on && m_tciServer->isRunning()) {
+                m_tciServer->stop();
+            }
+            if (m_appletPanel && m_appletPanel->catApplet())
+                m_appletPanel->catApplet()->setTciEnabled(on);
+        }
+#endif
+    });
+
     auto* autoDaxAction = settingsMenu->addAction("Autostart DAX with AetherSDR");
     autoDaxAction->setCheckable(true);
     autoDaxAction->setChecked(
@@ -2762,6 +2847,7 @@ void MainWindow::buildMenuBar()
 #endif
             && action != multiFlexAction
             && action != autoRigctlAction && action != autoCatAction
+            && action != autoTciAction
             && action != autoDaxAction && action != lowLatencyDaxTxAction) {
             connect(action, &QAction::triggered, this, [this, action] {
                 statusBar()->showMessage(action->text().remove("...") + " — not yet implemented", 3000);
@@ -3337,6 +3423,9 @@ void MainWindow::buildUI()
     m_paTempLabel = new QLabel("");
     m_paTempLabel->setStyleSheet("QLabel { color: #8aa8c0; font-size: 12px; }");
     m_paTempLabel->setAlignment(Qt::AlignCenter);
+    m_paTempLabel->setCursor(Qt::PointingHandCursor);
+    m_paTempLabel->installEventFilter(this);
+    updatePaTempLabel();
     m_supplyVoltLabel = new QLabel("");
     m_supplyVoltLabel->setStyleSheet("QLabel { color: #607080; font-size: 12px; }");
     m_supplyVoltLabel->setAlignment(Qt::AlignCenter);
@@ -3546,6 +3635,18 @@ void MainWindow::onConnectionStateChanged(bool connected)
             if (m_appletPanel && m_appletPanel->catApplet())
                 m_appletPanel->catApplet()->setPtyEnabled(true);
         }
+#ifdef HAVE_WEBSOCKETS
+        // Auto-start TCI WebSocket server if enabled
+        if (as.value("AutoStartTCI", "False").toString() == "True") {
+            if (m_tciServer && !m_tciServer->isRunning()) {
+                int tciPort = as.value("TciPort", "50001").toInt();
+                m_tciServer->start(static_cast<quint16>(tciPort));
+                qDebug() << "AutoStart: TCI on port" << tciPort;
+            }
+            if (m_appletPanel && m_appletPanel->catApplet())
+                m_appletPanel->catApplet()->setTciEnabled(true);
+        }
+#endif
         // Populate XVTR bands after radio status settles, and refresh
         // whenever XVTR config changes (add/remove/rename). (#571)
         auto refreshXvtr = [this]() {

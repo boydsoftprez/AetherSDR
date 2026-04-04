@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(AetherSDR VERSION 0.7.18.6 LANGUAGES C CXX)
+project(AetherSDR VERSION 0.7.19 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -221,6 +221,8 @@ set(CORE_SOURCES
     src/core/WsjtxClient.cpp
     src/core/PotaClient.cpp
     src/core/RigctlServer.cpp
+    src/core/TciServer.cpp
+    src/core/TciProtocol.cpp
     src/core/FirmwareUploader.cpp
     src/core/DvkWavTransfer.cpp
     src/core/FirmwareStager.cpp
@@ -496,7 +498,18 @@ if(HIDAPI_FOUND)
         src/core/StreamDeckManager.cpp
         src/core/StreamDeckKeyRenderer.cpp
         src/gui/StreamDeckDialog.cpp)
-    target_include_directories(AetherSDR PRIVATE ${HIDAPI_INCLUDE_DIRS})
+    set(HIDAPI_NORMALIZED_INCLUDE_DIRS ${HIDAPI_INCLUDE_DIRS})
+    foreach(hidapi_dir IN LISTS HIDAPI_INCLUDE_DIRS)
+        if(EXISTS "${hidapi_dir}/hidapi.h")
+            get_filename_component(hidapi_leaf "${hidapi_dir}" NAME)
+            if(hidapi_leaf STREQUAL "hidapi")
+                get_filename_component(hidapi_parent "${hidapi_dir}" DIRECTORY)
+                list(APPEND HIDAPI_NORMALIZED_INCLUDE_DIRS "${hidapi_parent}")
+            endif()
+        endif()
+    endforeach()
+    list(REMOVE_DUPLICATES HIDAPI_NORMALIZED_INCLUDE_DIRS)
+    target_include_directories(AetherSDR PRIVATE ${HIDAPI_NORMALIZED_INCLUDE_DIRS})
     target_link_libraries(AetherSDR PRIVATE ${HIDAPI_LIBRARIES})
 else()
     message(STATUS "hidapi not found — USB HID encoder support disabled")
