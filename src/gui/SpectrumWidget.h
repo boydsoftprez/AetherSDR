@@ -13,7 +13,6 @@ namespace AetherSDR {
 class GpuSpectrumRenderer;
 class SpectrumOverlayMenu;
 class VfoWidget;
-class WaterfallOverlayWidget;
 
 // Panadapter / spectrum display widget.
 //
@@ -358,10 +357,9 @@ private:
 
     // Scrolling waterfall image (Format_RGB32)
 #ifdef HAVE_RHI
-    GpuSpectrumRenderer* m_gpuRenderer{nullptr};
-    WaterfallOverlayWidget* m_wfOverlay{nullptr};
     friend class WaterfallOverlayWidget;
-    void paintWaterfallOverlays(QPainter& p, const QRect& wfRect);
+    GpuSpectrumRenderer* m_gpuRenderer{nullptr};
+    QWidget* m_wfOverlay{nullptr};
 #endif
     QImage m_waterfall;
     int    m_wfWriteRow{0};  // ring buffer: next row to write (newest at top)

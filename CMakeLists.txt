@@ -541,9 +541,10 @@ endif()
 if(ENABLE_RHI)
     find_package(Qt6 REQUIRED COMPONENTS GuiPrivate)
     target_compile_definitions(AetherSDR PRIVATE HAVE_RHI)
-    target_sources(AetherSDR PRIVATE
-        src/gui/GpuSpectrumRenderer.cpp)
+    target_sources(AetherSDR PRIVATE src/gui/GpuSpectrumRenderer.cpp)
     target_link_libraries(AetherSDR PRIVATE Qt6::GuiPrivate)
+    # Ensure MOC sees HAVE_RHI for conditional base class in SpectrumWidget.h
+    set_property(TARGET AetherSDR APPEND PROPERTY AUTOMOC_MOC_OPTIONS "-DHAVE_RHI")
     message(STATUS "GPU spectrum rendering enabled (QRhi)")
 endif()
 

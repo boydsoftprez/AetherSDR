@@ -101,11 +101,25 @@ CPU sample: drawSpectrum dropped from 960 → 685 samples (29% reduction in FFT 
 - This costs ~1400 samples/5s (~50% of main thread rendering time)
 - Without native child windows, Qt paints directly to the backing store (much faster)
 
-### The real win requires single-surface rendering
-- To eliminate the compositing overhead, SpectrumWidget itself must BE the QRhiWidget
-- One GPU surface for everything: waterfall + spectrum + overlays
-- No native child windows except for actual child widgets (VFO, overlay menu)
-- QPainter text overlays can draw on QRhiWidget after GPU render (Qt 6.6+)
+### QRhiWidget-as-base-class: 17% CPU but QPainter broken on Metal
+- Making SpectrumWidget inherit QRhiWidget gave 17% CPU (vs 110% baseline)
+- BUT `QPainter(this)` on QRhiWidget returns inactive on Qt 6.11 Metal
+- Error: `QWidget::paintEngine: Should no longer be called`
+- QPainter compositing on QRhiWidget is documented for Qt 6.7+ but does
+  NOT work on Metal backend in Qt 6.11 — likely a Qt bug or limitation
+- The GPU render() works, but paintEvent can't draw overlays → laggy display
+- **This approach is parked** until Qt fixes QPainter-on-QRhiWidget with Metal
+
+### Child QRhiWidget approach: working but overhead negates savings
+- Child QRhiWidget + transparent overlay: visually correct, all overlays work
+- But WA_NativeWindow compositing costs ~143% CPU (worse than 110% baseline)
+- The compositing overhead from native child windows exceeds waterfall blit savings
+
+### Remaining path forward
+- All GPU rendering in render() (waterfall + FFT + overlays as GPU primitives)
+- No QPainter at all on the QRhiWidget — text rendered to QImage, uploaded as texture
+- OR: wait for Qt to fix QPainter-on-QRhiWidget with Metal backend
+- OR: use QOpenGLWidget instead of QRhiWidget (older but QPainter compositing works)
 
 ### GPU waterfall IS working correctly
 - Metal backend initializes on M1 Pro
