@@ -267,8 +267,52 @@ SpectrumWidget : QRhiWidget
 
 ## Measurements To Take Next
 - [x] SpectrumWidget-as-QRhiWidget: ~17-29% CPU (confirmed)
-- [ ] After waterfall fix: smoothness + CPU
-- [ ] After Retina DPR fix: text sharpness
+- [x] After waterfall fix: smooth scrolling confirmed at 47-50 FPS render rate
+- [x] After Retina DPR fix: text sharp at 2x device pixel ratio
 - [ ] Linux (OpenGL): verify GPU actually helps where CG doesn't
 - [ ] 4-pan multi-pan: GPU vs CPU comparison
 - [ ] High FPS (50 FPS waterfall): GPU vs CPU comparison
+
+---
+
+## Measurement 5: Final working state (two-quad waterfall + Retina overlay)
+
+| Metric | Value |
+|--------|-------|
+| CPU % | ~39-52% (RelWithDebInfo) |
+| render() FPS | 47-50 |
+| Waterfall scroll | Smooth, correct direction, seeded from QImage |
+| Spectrum line | Smooth via QPainter overlay |
+| Text sharpness | Sharp (2x Retina overlay) |
+| Passband overlay | Visible with correct alpha |
+| Resize | No pink flash (repaint() fix) |
+| Startup | Brief pink flash (known limitation) |
+
+## Known Issue: Startup Pink Flash (QRhiWidget Metal)
+
+**Symptom:** Brief magenta/pink flash (~1-2 frames) when the app first
+launches. Does NOT occur on resize (fixed with repaint()).
+
+**Root cause:** QRhiWidget on Metal creates a native window with a GPU
+backing texture that contains uninitialized video memory. Metal does not
+zero-initialize textures. The pink color is raw GPU memory displayed for
+1-2 frames before our first render() call clears it to black.
+
+**Attempted fixes (all failed):**
+1. QPalette background color — ignored by QRhiWidget (renders via GPU, not backing store)
+2. Splash cover widget with WA_NativeWindow — can't stack above QRhiWidget's native surface
+3. Deferred WA_NativeWindow via QTimer — breaks GPU initialization entirely
+4. setFixedColorBufferSize(1,1) then switch — breaks rendering, widget never appears
+5. Clear in initialize() via beginPass — renderTarget() not ready during initialize
+
+**Why resize works but startup doesn't:** On resize, we call repaint()
+which forces synchronous render() before the compositor shows the frame.
+On startup, the widget is first shown by the layout system BEFORE any
+paint event fires — there's no opportunity to call render() before the
+first compositor frame.
+
+**Possible future fixes:**
+- Qt bug report: QRhiWidget should zero-initialize its backing texture on Metal
+- Use QQuickWidget with QQuickRenderControl instead of QRhiWidget
+- Parent widget paints black behind SpectrumWidget before it's shown
+- Override QRhiWidget::event() to intercept the Show event and force a render
