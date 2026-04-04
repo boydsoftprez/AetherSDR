@@ -3110,12 +3110,50 @@ void SpectrumWidget::render(QRhiCommandBuffer* cb)
 
     // Upload overlay QImage as texture
     if (m_gpuOverlayTexture && !m_overlayCache.isNull() && m_overlayUploaded == false) {
-        // Resize overlay texture if needed
+        // Resize overlay texture if needed — must also rebuild SRB
         if (m_gpuOverlayTexture->pixelSize() != m_overlayCache.size()) {
             m_gpuOverlayTexture->destroy();
             delete m_gpuOverlayTexture;
             m_gpuOverlayTexture = r->newTexture(QRhiTexture::BGRA8, m_overlayCache.size());
             m_gpuOverlayTexture->create();
+
+            // Rebuild overlay SRB to reference new texture
+            if (m_gpuOverlaySrb) { m_gpuOverlaySrb->destroy(); delete m_gpuOverlaySrb; }
+            m_gpuOverlaySrb = r->newShaderResourceBindings();
+            m_gpuOverlaySrb->setBindings({
+                QRhiShaderResourceBinding::uniformBuffer(0,
+                    QRhiShaderResourceBinding::VertexStage | QRhiShaderResourceBinding::FragmentStage,
+                    m_gpuUbuf),
+                QRhiShaderResourceBinding::sampledTexture(1, QRhiShaderResourceBinding::FragmentStage,
+                    m_gpuOverlayTexture, m_gpuSampler),
+            });
+            m_gpuOverlaySrb->create();
+
+            // Rebuild overlay pipeline with new SRB
+            if (m_gpuOverlayPipeline) { m_gpuOverlayPipeline->destroy(); delete m_gpuOverlayPipeline; }
+            m_gpuOverlayPipeline = r->newGraphicsPipeline();
+            m_gpuOverlayPipeline->setShaderStages({
+                { QRhiShaderStage::Vertex, loadShader(":/shaders/waterfall.vert.qsb") },
+                { QRhiShaderStage::Fragment, loadShader(":/shaders/waterfall.frag.qsb") },
+            });
+            QRhiVertexInputLayout ovLayout;
+            ovLayout.setBindings({ { 4 * sizeof(float) } });
+            ovLayout.setAttributes({
+                { 0, 0, QRhiVertexInputAttribute::Float2, 0 },
+                { 0, 1, QRhiVertexInputAttribute::Float2, 2 * sizeof(float) },
+            });
+            m_gpuOverlayPipeline->setVertexInputLayout(ovLayout);
+            m_gpuOverlayPipeline->setTopology(QRhiGraphicsPipeline::TriangleStrip);
+            QRhiGraphicsPipeline::TargetBlend blend;
+            blend.enable = true;
+            blend.srcColor = QRhiGraphicsPipeline::One;
+            blend.dstColor = QRhiGraphicsPipeline::OneMinusSrcAlpha;
+            blend.srcAlpha = QRhiGraphicsPipeline::One;
+            blend.dstAlpha = QRhiGraphicsPipeline::OneMinusSrcAlpha;
+            m_gpuOverlayPipeline->setTargetBlends({ blend });
+            m_gpuOverlayPipeline->setShaderResourceBindings(m_gpuOverlaySrb);
+            m_gpuOverlayPipeline->setRenderPassDescriptor(renderTarget()->renderPassDescriptor());
+            m_gpuOverlayPipeline->create();
         }
         QRhiTextureSubresourceUploadDescription overlaySub(m_overlayCache);
         u->uploadTexture(m_gpuOverlayTexture, QRhiTextureUploadEntry(0, 0, overlaySub));
