@@ -13,5 +13,7 @@
     <qresource prefix="/shaders">
         <file alias="waterfall.vert.qsb">resources/shaders/waterfall.vert.qsb</file>
         <file alias="waterfall.frag.qsb">resources/shaders/waterfall.frag.qsb</file>
+        <file alias="spectrum.vert.qsb">resources/shaders/spectrum.vert.qsb</file>
+        <file alias="spectrum.frag.qsb">resources/shaders/spectrum.frag.qsb</file>
     </qresource>
 </RCC>

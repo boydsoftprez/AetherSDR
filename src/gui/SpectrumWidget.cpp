@@ -564,6 +564,7 @@ void SpectrumWidget::updateSpectrum(const QVector<float>& binsDbm)
 #ifdef HAVE_RHI
     // Render overlay QImage on the main thread (outside render() to keep GPU loop fast)
     renderOverlaysToImage();
+    m_gpuSpecDirty = true;  // new FFT data → update GPU spectrum vertex buffer
     // VFO positioning is handled by setVfoFrequency() and setFrequencyRange()
     // which are called when the frequency actually changes — not every FFT frame.
 #endif
@@ -2867,7 +2868,7 @@ void SpectrumWidget::renderOverlaysToImage()
     }
 
     drawGrid(p, specRect);
-    drawSpectrum(p, specRect);
+    // drawSpectrum removed — rendered via GPU LineStrip (Phase 2)
     if (m_bandPlanFontSize > 0) drawBandPlan(p, specRect);
     drawDbmScale(p, specRect);
 
@@ -3034,6 +3035,61 @@ void SpectrumWidget::initialize(QRhiCommandBuffer* cb)
     if (m_gpuTexWidth > 0 && m_gpuTexHeight > 0)
         createWaterfallTexture();
 
+    // Phase 2: Spectrum line GPU resources — pre-computed vec2 positions
+    m_gpuSpecVbuf = r->newBuffer(QRhiBuffer::Dynamic, QRhiBuffer::VertexBuffer,
+                                  8192 * 2 * sizeof(float));  // max 8192 vec2 vertices
+    m_gpuSpecVbuf->create();
+
+    m_gpuSpecUbuf = r->newBuffer(QRhiBuffer::Dynamic, QRhiBuffer::UniformBuffer,
+                                  4 * sizeof(float));  // vec4 fillColor
+    m_gpuSpecUbuf->create();
+
+    m_gpuSpecSrb = r->newShaderResourceBindings();
+    m_gpuSpecSrb->setBindings({
+        QRhiShaderResourceBinding::uniformBuffer(0,
+            QRhiShaderResourceBinding::VertexStage | QRhiShaderResourceBinding::FragmentStage,
+            m_gpuSpecUbuf),
+    });
+    m_gpuSpecSrb->create();
+
+    QRhiVertexInputLayout specLayout;
+    specLayout.setBindings({ { 2 * sizeof(float) } });  // stride = vec2
+    specLayout.setAttributes({
+        { 0, 0, QRhiVertexInputAttribute::Float2, 0 },  // position
+    });
+
+    QRhiGraphicsPipeline::TargetBlend specBlend;
+    specBlend.enable = true;
+    specBlend.srcColor = QRhiGraphicsPipeline::SrcAlpha;
+    specBlend.dstColor = QRhiGraphicsPipeline::OneMinusSrcAlpha;
+    specBlend.srcAlpha = QRhiGraphicsPipeline::One;
+    specBlend.dstAlpha = QRhiGraphicsPipeline::OneMinusSrcAlpha;
+
+    m_gpuSpecLinePipeline = r->newGraphicsPipeline();
+    m_gpuSpecLinePipeline->setShaderStages({
+        { QRhiShaderStage::Vertex, loadShader(":/shaders/spectrum.vert.qsb") },
+        { QRhiShaderStage::Fragment, loadShader(":/shaders/spectrum.frag.qsb") },
+    });
+    m_gpuSpecLinePipeline->setVertexInputLayout(specLayout);
+    m_gpuSpecLinePipeline->setTopology(QRhiGraphicsPipeline::LineStrip);
+    m_gpuSpecLinePipeline->setTargetBlends({ specBlend });
+    m_gpuSpecLinePipeline->setShaderResourceBindings(m_gpuSpecSrb);
+    m_gpuSpecLinePipeline->setRenderPassDescriptor(renderTarget()->renderPassDescriptor());
+    m_gpuSpecLinePipeline->create();
+
+    // Spectrum fill pipeline (TriangleStrip)
+    m_gpuSpecFillPipeline = r->newGraphicsPipeline();
+    m_gpuSpecFillPipeline->setShaderStages({
+        { QRhiShaderStage::Vertex, loadShader(":/shaders/spectrum.vert.qsb") },
+        { QRhiShaderStage::Fragment, loadShader(":/shaders/spectrum.frag.qsb") },
+    });
+    m_gpuSpecFillPipeline->setVertexInputLayout(specLayout);
+    m_gpuSpecFillPipeline->setTopology(QRhiGraphicsPipeline::TriangleStrip);
+    m_gpuSpecFillPipeline->setTargetBlends({ specBlend });
+    m_gpuSpecFillPipeline->setShaderResourceBindings(m_gpuSpecSrb);
+    m_gpuSpecFillPipeline->setRenderPassDescriptor(renderTarget()->renderPassDescriptor());
+    m_gpuSpecFillPipeline->create();
+
     m_gpuInitialized = true;
 }
 
@@ -3107,6 +3163,42 @@ void SpectrumWidget::render(QRhiCommandBuffer* cb)
         }
     }
     m_gpuPendingRows.clear();
+
+    // Upload spectrum FFT positions to GPU vertex buffer (pre-computed vec2)
+    if (m_gpuSpecDirty && m_gpuSpecVbuf && !m_smoothed.isEmpty()) {
+        const int chromeH_ = FREQ_SCALE_H + DIVIDER_H;
+        const int contentH_ = height() - chromeH_;
+        const int specH_ = static_cast<int>(contentH_ * m_spectrumFrac);
+        const float specTopNDC_ = 1.0f;
+        const float specBotNDC_ = 1.0f - 2.0f * static_cast<float>(specH_) / height();
+
+        const int n = qMin(m_smoothed.size(), 4096);  // halved — fill uses 2x vertices
+
+        // Build line vertices (n × vec2) followed by fill vertices (2n × vec2)
+        // Fill is a TriangleStrip: for each bin, (specPoint, bottomPoint)
+        QVector<float> verts(n * 2 + n * 4);  // line: n*2, fill: n*2*2
+        float* lineData = verts.data();
+        float* fillData = verts.data() + n * 2;
+
+        for (int i = 0; i < n; ++i) {
+            const float norm = qBound(0.0f, (m_refLevel - m_smoothed[i]) / m_dynamicRange, 1.0f);
+            const float x = -1.0f + 2.0f * static_cast<float>(i) / n;
+            const float y = specTopNDC_ + (specBotNDC_ - specTopNDC_) * norm;
+
+            // Line vertex
+            lineData[i * 2] = x;
+            lineData[i * 2 + 1] = y;
+
+            // Fill: two vertices per bin — spectrum point then bottom point
+            fillData[i * 4] = x;
+            fillData[i * 4 + 1] = y;
+            fillData[i * 4 + 2] = x;
+            fillData[i * 4 + 3] = specBotNDC_;
+        }
+        u->updateDynamicBuffer(m_gpuSpecVbuf, 0, verts.size() * sizeof(float), verts.constData());
+        m_gpuSpecBinCount = n;
+        m_gpuSpecDirty = false;
+    }
 
     // Upload overlay QImage as texture
     if (m_gpuOverlayTexture && !m_overlayCache.isNull() && m_overlayUploaded == false) {
@@ -3232,7 +3324,7 @@ void SpectrumWidget::render(QRhiCommandBuffer* cb)
         cb->draw(4);
     }
 
-    // Draw overlay quad — fullscreen, alpha blended on top
+    // Draw overlay quad — fullscreen, alpha blended (provides background, grid, text)
     if (m_gpuOverlayPipeline && m_gpuOverlayTexture) {
         cb->setGraphicsPipeline(m_gpuOverlayPipeline);
         cb->setShaderResources(m_gpuOverlaySrb);
@@ -3242,11 +3334,57 @@ void SpectrumWidget::render(QRhiCommandBuffer* cb)
         cb->draw(4);
     }
 
+    // Draw GPU spectrum fill + line ON TOP of overlay (Phase 2)
+    if (m_gpuSpecFillPipeline && m_gpuSpecLinePipeline && m_gpuSpecBinCount > 0) {
+        // Draw fill first (semi-transparent, behind the line)
+        float fillColor[4] = {
+            static_cast<float>(m_fftFillColor.redF()),
+            static_cast<float>(m_fftFillColor.greenF()),
+            static_cast<float>(m_fftFillColor.blueF()),
+            m_fftFillAlpha,  // user's fill opacity slider value
+        };
+        QRhiResourceUpdateBatch* uFill = r->nextResourceUpdateBatch();
+        uFill->updateDynamicBuffer(m_gpuSpecUbuf, 0, sizeof(fillColor), fillColor);
+        cb->resourceUpdate(uFill);
+
+        cb->setGraphicsPipeline(m_gpuSpecFillPipeline);
+        cb->setShaderResources(m_gpuSpecSrb);
+        // Fill data starts after line data in the vertex buffer
+        const quint32 fillOffset = m_gpuSpecBinCount * 2 * sizeof(float);
+        const QRhiCommandBuffer::VertexInput fillBinding(m_gpuSpecVbuf, fillOffset);
+        cb->setVertexInput(0, 1, &fillBinding);
+        cb->draw(m_gpuSpecBinCount * 2);  // 2 vertices per bin (top + bottom)
+
+        // Draw line on top (fully opaque)
+        float lineColor[4] = {
+            static_cast<float>(m_fftFillColor.redF()),
+            static_cast<float>(m_fftFillColor.greenF()),
+            static_cast<float>(m_fftFillColor.blueF()),
+            1.0f,
+        };
+        QRhiResourceUpdateBatch* uLine = r->nextResourceUpdateBatch();
+        uLine->updateDynamicBuffer(m_gpuSpecUbuf, 0, sizeof(lineColor), lineColor);
+        cb->resourceUpdate(uLine);
+
+        cb->setGraphicsPipeline(m_gpuSpecLinePipeline);
+        cb->setShaderResources(m_gpuSpecSrb);
+        const QRhiCommandBuffer::VertexInput lineBinding(m_gpuSpecVbuf, 0);
+        cb->setVertexInput(0, 1, &lineBinding);
+        cb->draw(m_gpuSpecBinCount);
+    }
+
     cb->endPass();
 }
 
 void SpectrumWidget::releaseResources()
 {
+    delete m_gpuSpecFillPipeline; m_gpuSpecFillPipeline = nullptr;
+    delete m_gpuSpecLinePipeline; m_gpuSpecLinePipeline = nullptr;
+    delete m_gpuSpecSrb; m_gpuSpecSrb = nullptr;
+    delete m_gpuSpecUbuf; m_gpuSpecUbuf = nullptr;
+    delete m_gpuSpecVbuf; m_gpuSpecVbuf = nullptr;
+    delete m_gpuOverlayPipeline; m_gpuOverlayPipeline = nullptr;
+    delete m_gpuOverlaySrb; m_gpuOverlaySrb = nullptr;
     delete m_gpuPipeline; m_gpuPipeline = nullptr;
     delete m_gpuSrb; m_gpuSrb = nullptr;
     delete m_gpuSampler; m_gpuSampler = nullptr;

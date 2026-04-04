@@ -394,6 +394,15 @@ private:
     QRhiShaderResourceBindings* m_gpuOverlaySrb{nullptr};
     QRhiGraphicsPipeline* m_gpuOverlayPipeline{nullptr};
 
+    // Phase 2: GPU spectrum line
+    QRhiBuffer* m_gpuSpecVbuf{nullptr};
+    QRhiBuffer* m_gpuSpecUbuf{nullptr};
+    QRhiGraphicsPipeline* m_gpuSpecLinePipeline{nullptr};
+    QRhiGraphicsPipeline* m_gpuSpecFillPipeline{nullptr};
+    QRhiShaderResourceBindings* m_gpuSpecSrb{nullptr};
+    bool m_gpuSpecDirty{false};
+    int m_gpuSpecBinCount{0};
+
     struct GpuPendingRow { int row; QByteArray data; };
     QVector<GpuPendingRow> m_gpuPendingRows;
     int m_gpuTexWidth{0};
