@@ -36,6 +36,34 @@
 
 namespace AetherSDR {
 
+#ifdef HAVE_RHI
+/// Transparent native child window that sits above the GPU waterfall renderer
+/// and draws QPainter overlays (passband, slice lines, TNF, time scale).
+class WaterfallOverlayWidget : public QWidget {
+public:
+    explicit WaterfallOverlayWidget(SpectrumWidget* parent)
+        : QWidget(parent, Qt::Widget), m_spectrum(parent)
+    {
+        setAttribute(Qt::WA_NativeWindow);
+        setAttribute(Qt::WA_TranslucentBackground);
+        setAttribute(Qt::WA_TransparentForMouseEvents);
+        setAttribute(Qt::WA_NoSystemBackground);
+        setAutoFillBackground(false);
+    }
+
+protected:
+    void paintEvent(QPaintEvent*) override {
+        QPainter p(this);
+        p.setRenderHint(QPainter::Antialiasing, false);
+        const QRect wfRect(0, 0, width(), height());
+        m_spectrum->paintWaterfallOverlays(p, wfRect);
+    }
+
+private:
+    SpectrumWidget* m_spectrum;
+};
+#endif
+
 SpectrumWidget::SpectrumWidget(QWidget* parent)
     : QWidget(parent)
 {
@@ -51,9 +79,17 @@ SpectrumWidget::SpectrumWidget(QWidget* parent)
     m_overlayMenu->raise();
 
 #ifdef HAVE_RHI
-    // GPU-accelerated waterfall renderer (Phase 1: solid color proof-of-concept)
+    // GPU-accelerated waterfall renderer
     m_gpuRenderer = new GpuSpectrumRenderer(this);
     m_gpuRenderer->show();
+
+    // Transparent overlay widget on top of GPU renderer for QPainter overlays
+    // (passband, slice lines, TNF, spots, time scale). Needed because
+    // WA_NativeWindow on the GPU widget obscures normal QPainter drawing.
+    // Transparent overlay for QPainter drawing on top of GPU waterfall
+    m_wfOverlay = new WaterfallOverlayWidget(this);
+    m_wfOverlay->show();
+    m_wfOverlay->raise();
 #endif
 
     // Load display settings (panIndex 0 by default — loadSettings() can be
@@ -1544,6 +1580,10 @@ void SpectrumWidget::resizeEvent(QResizeEvent* ev)
         const int wfY = specH + chromeH;  // chromeH = DIVIDER_H + FREQ_SCALE_H
         m_gpuRenderer->setGeometry(0, wfY, width(), wfHeight);
         m_gpuRenderer->setWaterfallSize(width(), wfHeight);
+        if (m_wfOverlay) {
+            m_wfOverlay->setGeometry(0, wfY, width(), wfHeight);
+            m_wfOverlay->raise();
+        }
     }
 #endif
 
@@ -1737,6 +1777,13 @@ void SpectrumWidget::paintEvent(QPaintEvent*)
         drawSliceMarkers(p, specRect, wfRect);
         drawOffScreenSlices(p, specRect);
     }
+
+#ifdef HAVE_RHI
+    // Trigger repaint of the transparent overlay widget so waterfall overlays
+    // (passband, slice lines, TNF, time scale) stay in sync.
+    if (m_wfOverlay && m_gpuRenderer && m_gpuRenderer->isReady())
+        m_wfOverlay->update();
+#endif
 
     // Reposition all VFO widgets — deconflict flags so they fly away from each other
     // Split pairs always face each other: RX←  →TX
@@ -2012,6 +2059,24 @@ void SpectrumWidget::drawWaterfall(QPainter& p, const QRect& r)
         }
     }
 }
+
+#ifdef HAVE_RHI
+void SpectrumWidget::paintWaterfallOverlays(QPainter& p, const QRect& wfRect)
+{
+    // Called from WaterfallOverlayWidget::paintEvent().
+    // wfRect is in overlay-local coords: (0, 0, width, wfHeight).
+    // specRect needs negative Y to represent the spectrum area above.
+    const int chromeH  = FREQ_SCALE_H + DIVIDER_H;
+    const int contentH = height() - chromeH;
+    const int specH    = static_cast<int>(contentH * m_spectrumFrac);
+    const int wfY      = specH + chromeH;
+    const QRect specRect(0, -wfY, width(), specH);
+
+    drawTimeScale(p, wfRect);
+    drawTnfMarkers(p, specRect, wfRect);
+    drawSliceMarkers(p, specRect, wfRect);
+}
+#endif
 
 // ─── Band plan overlay (bottom 8px of FFT area) ─────────────────────────────
 

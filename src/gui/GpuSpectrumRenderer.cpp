@@ -36,7 +36,10 @@ GpuSpectrumRenderer::GpuSpectrumRenderer(QWidget* parent)
     setApi(Api::OpenGL);
 #endif
 
-    // QRhiWidget needs a native window handle to create its GPU surface
+    // QRhiWidget needs a native window handle to create its GPU surface.
+    // This creates a native child window that sits on top of QPainter content.
+    // Overlays (passband, slice lines, etc.) must be drawn by a transparent
+    // overlay widget stacked above this one — see SpectrumWidget integration.
     setAttribute(Qt::WA_NativeWindow);
 }
 
