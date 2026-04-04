@@ -678,13 +678,28 @@ void SpectrumWidget::updateWaterfallRow(const QVector<float>& binsIntensity,
             ++m_wfBlankerRingCount;
     }
 
-    // Write rows into ring buffer (no memmove)
+#ifdef HAVE_RHI
+    // GPU path: upload scanline directly, skip QImage ring buffer
+    if (m_gpuRenderer && m_gpuRenderer->isReady()) {
+        for (int r = 0; r < rowsToPush; ++r) {
+            m_wfWriteRow = (m_wfWriteRow - 1 + h) % h;
+            // No interpolation for GPU path (single row per tile is typical)
+            m_gpuRenderer->uploadRow(reinterpret_cast<const quint32*>(scanline.constData()),
+                                     m_wfWriteRow, destWidth);
+        }
+        m_gpuRenderer->setWriteRow(m_wfWriteRow);
+        m_prevTileScanline = scanline;
+        update();
+        return;
+    }
+#endif
+
+    // CPU fallback: write rows into QImage ring buffer (no memmove)
     const bool canInterp = (m_prevTileScanline.size() == destWidth && rowsToPush > 1);
     for (int r = 0; r < rowsToPush; ++r) {
         m_wfWriteRow = (m_wfWriteRow - 1 + h) % h;
         auto* row = reinterpret_cast<QRgb*>(bits + m_wfWriteRow * bpl);
         if (canInterp) {
-            // t=0 at row 0 (current), t=1 at last row (previous)
             const float t = static_cast<float>(r) / rowsToPush;
             for (int x = 0; x < destWidth; ++x) {
                 const QRgb c = scanline[x];
@@ -699,19 +714,6 @@ void SpectrumWidget::updateWaterfallRow(const QVector<float>& binsIntensity,
         }
     }
     m_prevTileScanline = scanline;
-
-#ifdef HAVE_RHI
-    // Upload the written rows to GPU texture
-    if (m_gpuRenderer && m_gpuRenderer->isReady()) {
-        // Re-read the rows we just wrote (they may be interpolated)
-        for (int r = 0; r < rowsToPush; ++r) {
-            const int rowIdx = (m_wfWriteRow + r) % h;
-            auto* rowData = reinterpret_cast<const quint32*>(bits + rowIdx * bpl);
-            m_gpuRenderer->uploadRow(rowData, rowIdx, destWidth);
-        }
-        m_gpuRenderer->setWriteRow(m_wfWriteRow);
-    }
-#endif
 
     update();
 }
@@ -1688,35 +1690,43 @@ QRgb SpectrumWidget::intensityToRgb(float intensity) const
 void SpectrumWidget::pushWaterfallRow(const QVector<float>& bins, int destWidth,
                                       double tileLowMhz, double tileHighMhz)
 {
-    // (time scale uses m_wfLineDuration from radio status — no measurement needed)
+    Q_UNUSED(tileLowMhz);
+    Q_UNUSED(tileHighMhz);
 
-    if (m_waterfall.isNull() || destWidth <= 0) return;
+    if (destWidth <= 0) return;
 
-    const int h = m_waterfall.height();
-    if (h <= 1) return;
+    const int h = m_waterfall.isNull() ? 0 : m_waterfall.height();
 
-    // Ring buffer: write new row at m_wfWriteRow, no memmove (#391)
+#ifdef HAVE_RHI
+    // GPU path: color-map into a temp buffer and upload directly — skip QImage entirely
+    if (m_gpuRenderer && m_gpuRenderer->isReady() && h > 1) {
+        m_wfWriteRow = (m_wfWriteRow - 1 + h) % h;
+        QVector<quint32> rowBuf(destWidth);
+        for (int x = 0; x < destWidth; ++x) {
+            const int binIdx = x * bins.size() / destWidth;
+            const float dbm = (binIdx >= 0 && binIdx < bins.size()) ? bins[binIdx] : m_wfMinDbm;
+            rowBuf[x] = dbmToRgb(dbm);
+        }
+        m_gpuRenderer->uploadRow(rowBuf.constData(), m_wfWriteRow, destWidth);
+        m_gpuRenderer->setWriteRow(m_wfWriteRow);
+        return;
+    }
+#endif
+
+    // CPU fallback: write to QImage ring buffer
+    if (m_waterfall.isNull() || h <= 1) return;
+
     uchar* bits = m_waterfall.bits();
     const qsizetype bpl = m_waterfall.bytesPerLine();
 
     m_wfWriteRow = (m_wfWriteRow - 1 + h) % h;
     auto* row = reinterpret_cast<QRgb*>(bits + m_wfWriteRow * bpl);
 
-    Q_UNUSED(tileLowMhz);
-    Q_UNUSED(tileHighMhz);
-
     for (int x = 0; x < destWidth; ++x) {
         const int binIdx = x * bins.size() / destWidth;
         const float dbm = (binIdx >= 0 && binIdx < bins.size()) ? bins[binIdx] : m_wfMinDbm;
         row[x] = dbmToRgb(dbm);
     }
-
-#ifdef HAVE_RHI
-    if (m_gpuRenderer && m_gpuRenderer->isReady()) {
-        m_gpuRenderer->uploadRow(row, m_wfWriteRow, destWidth);
-        m_gpuRenderer->setWriteRow(m_wfWriteRow);
-    }
-#endif
 }
 
 // ─── Paint ────────────────────────────────────────────────────────────────────
@@ -1978,29 +1988,26 @@ void SpectrumWidget::drawSpectrum(QPainter& p, const QRect& r)
     const int h = r.height();
     const int n = m_smoothed.size();
 
-    // Build the spectrum line path (data points only)
-    QPainterPath linePath;
-    bool first = true;
-
+    // Build point array for the spectrum line — QPolygon is 5-10x faster
+    // than QPainterPath for polylines (avoids path tessellation overhead).
+    QVector<QPoint> linePoints(n);
     for (int i = 0; i < n; ++i) {
         const float dbm  = m_smoothed[i];
         const float norm = qBound(0.0f, (m_refLevel - dbm) / m_dynamicRange, 1.0f);
-        const int   x    = r.left() + static_cast<int>(static_cast<float>(i) / n * w);
-        const int   y    = r.top()  + qMin(static_cast<int>(norm * h), h - 1);
-
-        if (first) { linePath.moveTo(x, y); first = false; }
-        else        linePath.lineTo(x, y);
+        linePoints[i] = QPoint(
+            r.left() + static_cast<int>(static_cast<float>(i) / n * w),
+            r.top()  + qMin(static_cast<int>(norm * h), h - 1));
     }
 
-    // Closed fill path (line + bottom edges) for gradient fill only
-    QPainterPath fillPath(linePath);
-    fillPath.lineTo(r.right(), r.bottom());
-    fillPath.lineTo(r.left(),  r.bottom());
-    fillPath.closeSubpath();
+    // Build closed polygon for gradient fill (line points + bottom corners)
+    QVector<QPoint> fillPoints;
+    fillPoints.reserve(n + 2);
+    fillPoints.append(linePoints);
+    fillPoints.append(QPoint(r.right(), r.bottom()));
+    fillPoints.append(QPoint(r.left(),  r.bottom()));
 
     const int alphaTop = static_cast<int>(200 * m_fftFillAlpha);
     const int alphaBot = static_cast<int>(60 * m_fftFillAlpha);
-    // Derive darker bottom color from fill color
     QColor topColor(m_fftFillColor);
     topColor.setAlpha(alphaTop);
     QColor botColor = m_fftFillColor.darker(300);
@@ -2009,12 +2016,15 @@ void SpectrumWidget::drawSpectrum(QPainter& p, const QRect& r)
     grad.setColorAt(0.0, topColor);
     grad.setColorAt(1.0, botColor);
 
-    p.setRenderHint(QPainter::Antialiasing, true);
-    p.fillPath(fillPath, grad);
-    // Stroke only the spectrum line, not the fill closure
-    p.setPen(QPen(m_fftFillColor, 1.5));
-    p.drawPath(linePath);
     p.setRenderHint(QPainter::Antialiasing, false);
+    p.setPen(Qt::NoPen);
+    p.setBrush(grad);
+    p.drawPolygon(fillPoints.constData(), fillPoints.size());
+
+    // Spectrum line on top of the fill
+    p.setPen(QPen(m_fftFillColor, 1.0));
+    p.setBrush(Qt::NoBrush);
+    p.drawPolyline(linePoints.constData(), linePoints.size());
 }
 
 // ─── Waterfall ────────────────────────────────────────────────────────────────

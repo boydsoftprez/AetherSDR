@@ -43,24 +43,15 @@ GpuSpectrumRenderer::GpuSpectrumRenderer(QWidget* parent)
     setAttribute(Qt::WA_NativeWindow);
 }
 
-void GpuSpectrumRenderer::uploadRow(const quint32* rgbaRow, int row, int width)
+void GpuSpectrumRenderer::uploadRow(const quint32* bgraRow, int row, int width)
 {
-    if (width <= 0 || !rgbaRow) return;
+    if (width <= 0 || !bgraRow) return;
 
-    // QImage Format_RGB32 on little-endian stores bytes as B, G, R, A (0xAARRGGBB).
-    // QRhiTexture::RGBA8 expects byte order R, G, B, A.
-    // Swap R and B channels.
+    // Using BGRA8 texture format — qRgb() values (0xAARRGGBB, BGRA in memory
+    // on little-endian) can be uploaded directly with no byte swapping.
     PendingRow pr;
     pr.row = row;
-    pr.data.resize(width * 4);
-    auto* dst = reinterpret_cast<quint8*>(pr.data.data());
-    auto* src = reinterpret_cast<const quint8*>(rgbaRow);
-    for (int i = 0; i < width; ++i) {
-        dst[i * 4 + 0] = src[i * 4 + 2];  // R ← from byte 2 (was R in BGRA)
-        dst[i * 4 + 1] = src[i * 4 + 1];  // G stays
-        dst[i * 4 + 2] = src[i * 4 + 0];  // B ← from byte 0 (was B in BGRA)
-        dst[i * 4 + 3] = 0xFF;             // A = opaque
-    }
+    pr.data = QByteArray(reinterpret_cast<const char*>(bgraRow), width * 4);
     m_pendingRows.append(std::move(pr));
 
     // Request a repaint so render() picks up pending rows
@@ -94,7 +85,7 @@ void GpuSpectrumRenderer::createWaterfallTexture()
 
     if (m_texWidth <= 0 || m_texHeight <= 0) return;
 
-    m_wfTexture = r->newTexture(QRhiTexture::RGBA8,
+    m_wfTexture = r->newTexture(QRhiTexture::BGRA8,
                                 QSize(m_texWidth, m_texHeight));
     if (!m_wfTexture->create()) {
         qWarning() << "GpuSpectrumRenderer: failed to create waterfall texture"
