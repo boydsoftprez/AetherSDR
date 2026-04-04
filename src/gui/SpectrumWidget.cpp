@@ -8,6 +8,7 @@
 #endif
 
 #include <QPainter>
+#include <QTimer>
 #include <QPainterPath>
 #include <QResizeEvent>
 #include <QMouseEvent>
@@ -83,7 +84,6 @@ SpectrumWidget::SpectrumWidget(QWidget* parent)
 #endif
 
 #ifdef HAVE_RHI
-    // Force native window creation for QRhiWidget GPU surface
     setAttribute(Qt::WA_NativeWindow);
 #endif
 
@@ -1584,6 +1584,8 @@ void SpectrumWidget::resizeEvent(QResizeEvent* ev)
         m_gpuTexHeight = wfHeight;
         m_gpuNeedsTexRecreate = true;
         m_overlayDirty = true;
+        m_overlayUploaded = false;
+        repaint();
     }
 #endif
 
@@ -2791,11 +2793,16 @@ void SpectrumWidget::renderOverlaysToImage()
     const QSize sz = size();
     if (sz.isEmpty()) return;
 
-    // Render at logical pixel size (1x) — faster QPainter + smaller texture upload.
-    // GPU scaling handles the Retina upscale. Text is slightly less sharp but
-    // the 4x reduction in data keeps the render loop fast.
-    if (m_overlayCache.size() != sz)
-        m_overlayCache = QImage(sz, QImage::Format_ARGB32_Premultiplied);
+    // Render at device pixel resolution (2x Retina) for sharp text.
+    // The overlay is only re-rendered when data changes (not every frame),
+    // so the 4x larger image is acceptable.
+    const qreal dpr = devicePixelRatioF();
+    const QSize pxSz(static_cast<int>(sz.width() * dpr),
+                      static_cast<int>(sz.height() * dpr));
+    if (m_overlayCache.size() != pxSz) {
+        m_overlayCache = QImage(pxSz, QImage::Format_ARGB32_Premultiplied);
+        m_overlayCache.setDevicePixelRatio(dpr);
+    }
     m_overlayCache.fill(Qt::transparent);
 
     QPainter p(&m_overlayCache);
@@ -2868,18 +2875,36 @@ void SpectrumWidget::createWaterfallTexture()
         return;
     }
 
-    // Overlay texture at logical pixel size (1x — GPU scales to Retina)
-    m_gpuOverlayTexture = r->newTexture(QRhiTexture::BGRA8, size());
+    // Overlay texture at device pixel resolution (2x Retina for sharp text)
+    const qreal dpr = devicePixelRatioF();
+    const QSize overlayPxSz(static_cast<int>(width() * dpr), static_cast<int>(height() * dpr));
+    m_gpuOverlayTexture = r->newTexture(QRhiTexture::BGRA8, overlayPxSz);
     if (!m_gpuOverlayTexture->create()) {
         delete m_gpuOverlayTexture; m_gpuOverlayTexture = nullptr;
     }
 
-    // Queue black clear for waterfall
-    GpuPendingRow fullClear;
-    fullClear.row = -1;
-    fullClear.data = QByteArray(m_gpuTexWidth * m_gpuTexHeight * 4, '\0');
+    // Seed from QImage if available (preserves waterfall content on resize),
+    // otherwise clear to black. Queued as pending upload for next render().
     m_gpuPendingRows.clear();
-    m_gpuPendingRows.append(std::move(fullClear));
+    if (!m_waterfall.isNull() && m_waterfall.width() == m_gpuTexWidth
+            && m_waterfall.height() == m_gpuTexHeight) {
+        // Seed from QImage — row by row
+        const uchar* bits = m_waterfall.constBits();
+        const qsizetype bpl = m_waterfall.bytesPerLine();
+        for (int row = 0; row < m_gpuTexHeight; ++row) {
+            GpuPendingRow pr;
+            pr.row = row;
+            pr.data = QByteArray(reinterpret_cast<const char*>(bits + row * bpl), m_gpuTexWidth * 4);
+            m_gpuPendingRows.append(std::move(pr));
+        }
+        m_gpuWfSeeded = true;
+    } else {
+        // No QImage data — clear to black
+        GpuPendingRow fullClear;
+        fullClear.row = -1;
+        fullClear.data = QByteArray(m_gpuTexWidth * m_gpuTexHeight * 4, '\0');
+        m_gpuPendingRows.append(std::move(fullClear));
+    }
 
     // Rebuild SRB
     if (m_gpuSrb) { m_gpuSrb->destroy(); delete m_gpuSrb; }
@@ -2948,8 +2973,8 @@ void SpectrumWidget::createWaterfallTexture()
     }
 
     m_gpuNeedsTexRecreate = false;
-    m_gpuTexCleared = false;
-    m_gpuWfSeeded = false;
+    m_gpuTexCleared = true;  // pending rows will clear/seed on next render
+    m_overlayDirty = true;   // force overlay re-render after resize
     m_overlayDirty = true;
 
     qDebug() << "SpectrumWidget: GPU textures created" << m_gpuTexWidth << "x" << m_gpuTexHeight;
@@ -3111,14 +3136,8 @@ void SpectrumWidget::render(QRhiCommandBuffer* cb)
     };
     u->updateDynamicBuffer(m_gpuUbuf, 0, sizeof(uniforms), uniforms);
 
-    // Render — submit all resource updates with beginPass
+    // Always clear to black and submit resource updates — prevents pink flash
     const QSize outSz = renderTarget()->pixelSize();
-    if (!m_gpuTexCleared) {
-        cb->beginPass(renderTarget(), bgColor, {1.0f, 0}, u);
-        cb->endPass();
-        return;
-    }
-
     cb->beginPass(renderTarget(), bgColor, {1.0f, 0}, u);
 
     // Full-widget viewport for both draws
