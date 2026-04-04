@@ -509,47 +509,41 @@ bool AudioEngine::startTxStream(const QHostAddress& radioAddress, quint16 radioP
         return false;
     }
 
-    // Sample rate: macOS needs 48kHz for USB mics, Linux can try 24kHz first
-#ifdef Q_OS_MAC
-    fmt.setSampleRate(48000);
-    if (!dev.isFormatSupported(fmt)) {
-        fmt.setSampleRate(24000);
-        if (!dev.isFormatSupported(fmt)) {
-            qCWarning(lcAudio) << "AudioEngine: input device supports neither 48kHz nor 24kHz";
-            return false;
-        }
-    }
-#else
     qCDebug(lcAudio) << "AudioEngine: input device caps:"
         << dev.minimumSampleRate() << "-" << dev.maximumSampleRate() << "Hz"
         << dev.minimumChannelCount() << "-" << dev.maximumChannelCount() << "ch";
 
-    // Try 24kHz first (native radio rate), then 48kHz, then 44.1kHz
-    if (!dev.isFormatSupported(fmt)) {
-        qCWarning(lcAudio) << "AudioEngine: input device does not support 24kHz stereo Int16, trying 48kHz";
-        fmt.setSampleRate(48000);
-        if (!dev.isFormatSupported(fmt)) {
-            qCWarning(lcAudio) << "AudioEngine: 48kHz stereo Int16 not supported, trying 44100Hz";
-            fmt.setSampleRate(44100);
-            if (!dev.isFormatSupported(fmt)) {
-                // Last resort: try mono — some USB headsets only advertise mono
-                qCWarning(lcAudio) << "AudioEngine: 44100Hz stereo not supported, trying mono variants";
-                for (int rate : {48000, 44100, 24000}) {
-                    fmt.setSampleRate(rate);
-                    fmt.setChannelCount(1);
-                    if (dev.isFormatSupported(fmt)) {
-                        qCWarning(lcAudio) << "AudioEngine: using mono" << rate << "Hz input";
-                        break;
-                    }
-                }
-                if (!dev.isFormatSupported(fmt)) {
-                    qCWarning(lcAudio) << "AudioEngine: input device supports no usable format";
-                    return false;
-                }
+    // Negotiate the best sample rate for TX mic input.
+    // macOS: prefer 48kHz — Core Audio claims 24kHz support but its internal
+    // resampler produces gravelly artifacts at non-standard rates. Let r8brain
+    // handle the 48k→24k conversion instead (clean 2:1 integer-ratio downsample).
+    // Linux/Windows: prefer 24kHz (radio native — no resampling needed).
+    bool formatFound = false;
+#ifdef Q_OS_MAC
+    constexpr int rates[] = {48000, 44100, 24000};
+#else
+    constexpr int rates[] = {24000, 48000, 44100};
+#endif
+    for (int channels : {2, 1}) {
+        for (int rate : rates) {
+            fmt.setChannelCount(channels);
+            fmt.setSampleRate(rate);
+            if (dev.isFormatSupported(fmt)) {
+                formatFound = true;
+                break;
             }
         }
+        if (formatFound) break;
     }
-#endif
+
+    if (!formatFound) {
+        qCWarning(lcAudio) << "AudioEngine: input device supports no usable format"
+            << "(tried 24/48/44.1 kHz, stereo and mono)";
+        return false;
+    }
+
+    qCInfo(lcAudio) << "AudioEngine: selected TX input format:"
+        << fmt.sampleRate() << "Hz" << fmt.channelCount() << "ch";
 
     // Record actual negotiated input format for resampling in onTxAudioReady
     m_txInputRate = fmt.sampleRate();
@@ -586,7 +580,7 @@ bool AudioEngine::startTxStream(const QHostAddress& radioAddress, quint16 radioP
     connect(m_txPollTimer, &QTimer::timeout, this, &AudioEngine::onTxAudioReady);
     m_txPollTimer->start();
 #else
-    // Linux: pull mode works fine
+    // Linux/Windows: pull mode works fine
     m_audioSource = new QAudioSource(dev, fmt, this);
     m_micDevice = m_audioSource->start();
     if (!m_micDevice) {
