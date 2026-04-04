@@ -339,8 +339,19 @@ void SpectrumWidget::setFrequencyRange(double centerMhz, double bandwidthMhz)
                  << QString::number(centerMhz, 'f', 6)
                  << "bw=" << QString::number(bandwidthMhz, 'f', 6)
                  << "bins=" << m_smoothed.size();
+#ifdef HAVE_RHI
+    const bool rangeChanged = (centerMhz != m_centerMhz || bandwidthMhz != m_bandwidthMhz);
+#endif
     m_centerMhz    = centerMhz;
     m_bandwidthMhz = bandwidthMhz;
+#ifdef HAVE_RHI
+    if (rangeChanged) {
+        for (const auto& so : m_sliceOverlays) {
+            if (auto* w = m_vfoWidgets.value(so.sliceId, nullptr))
+                w->updatePosition(mhzToX(so.freqMhz), 0, VfoWidget::Auto);
+        }
+    }
+#endif
     update();
 }
 
@@ -408,6 +419,10 @@ void SpectrumWidget::setSliceOverlay(int sliceId, double freq, int fLow, int fHi
         o.ritOn = ritOn; o.ritFreq = ritFreq;
         o.xitOn = xitOn; o.xitFreq = xitFreq;
     }
+#ifdef HAVE_RHI
+    if (auto* w = m_vfoWidgets.value(sliceId, nullptr))
+        w->updatePosition(mhzToX(freq), 0, VfoWidget::Auto);
+#endif
     update();
 }
 
@@ -415,7 +430,14 @@ void SpectrumWidget::setSliceOverlayFreq(int sliceId, double freqMhz)
 {
     for (auto& so : m_sliceOverlays) {
         if (so.sliceId == sliceId) {
+            const bool freqChanged = (so.freqMhz != freqMhz);
             so.freqMhz = freqMhz;
+#ifdef HAVE_RHI
+            if (freqChanged) {
+                if (auto* w = m_vfoWidgets.value(sliceId, nullptr))
+                    w->updatePosition(mhzToX(freqMhz), 0, VfoWidget::Auto);
+            }
+#endif
             return;
         }
     }
@@ -448,7 +470,15 @@ void SpectrumWidget::setSplitPair(int rxSliceId, int txSliceId)
 void SpectrumWidget::setVfoFrequency(double freqMhz)
 {
     auto* o = const_cast<SliceOverlay*>(activeOverlay());
-    if (o) { o->freqMhz = freqMhz; update(); }
+    if (o) {
+        o->freqMhz = freqMhz;
+#ifdef HAVE_RHI
+        // Reposition VFO widget immediately on frequency change
+        if (auto* w = m_vfoWidgets.value(o->sliceId, nullptr))
+            w->updatePosition(mhzToX(freqMhz), 0, VfoWidget::Auto);
+#endif
+        update();
+    }
 }
 
 void SpectrumWidget::setVfoFilter(int lowHz, int highHz)
@@ -534,6 +564,8 @@ void SpectrumWidget::updateSpectrum(const QVector<float>& binsDbm)
 #ifdef HAVE_RHI
     // Render overlay QImage on the main thread (outside render() to keep GPU loop fast)
     renderOverlaysToImage();
+    // VFO positioning is handled by setVfoFrequency() and setFrequencyRange()
+    // which are called when the frequency actually changes — not every FFT frame.
 #endif
     update();
 }
@@ -1742,7 +1774,7 @@ void SpectrumWidget::paintEvent(QPaintEvent* ev)
     // QRhiWidget::paintEvent triggers initialize() + render() internally.
     // We MUST call it to keep the GPU pipeline running.
     QRhiWidget::paintEvent(ev);
-    return;  // All rendering done via render() + overlay cache
+    return;
 #endif
 
     QElapsedTimer frameTimer;
