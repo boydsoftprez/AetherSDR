@@ -2074,10 +2074,13 @@ void SpectrumWidget::drawSpectrum(QPainter& p, const QRect& r)
     p.setBrush(grad);
     p.drawPolygon(fillPoints.constData(), fillPoints.size());
 
-    // Spectrum line on top of the fill
+    // Spectrum line — drawn by GPU LineStrip when HAVE_RHI is active,
+    // otherwise by QPainter polyline.
+#ifndef HAVE_RHI
     p.setPen(QPen(m_fftFillColor, 1.0));
     p.setBrush(Qt::NoBrush);
     p.drawPolyline(linePoints.constData(), linePoints.size());
+#endif
 }
 
 // ─── Waterfall ────────────────────────────────────────────────────────────────
@@ -2868,7 +2871,7 @@ void SpectrumWidget::renderOverlaysToImage()
     }
 
     drawGrid(p, specRect);
-    // drawSpectrum removed — rendered via GPU LineStrip (Phase 2)
+    drawSpectrum(p, specRect);  // fill rendered by QPainter, line skipped (GPU handles it)
     if (m_bandPlanFontSize > 0) drawBandPlan(p, specRect);
     drawDbmScale(p, specRect);
 
@@ -3334,28 +3337,8 @@ void SpectrumWidget::render(QRhiCommandBuffer* cb)
         cb->draw(4);
     }
 
-    // Draw GPU spectrum fill + line ON TOP of overlay (Phase 2)
-    if (m_gpuSpecFillPipeline && m_gpuSpecLinePipeline && m_gpuSpecBinCount > 0) {
-        // Draw fill first (semi-transparent, behind the line)
-        float fillColor[4] = {
-            static_cast<float>(m_fftFillColor.redF()),
-            static_cast<float>(m_fftFillColor.greenF()),
-            static_cast<float>(m_fftFillColor.blueF()),
-            m_fftFillAlpha,  // user's fill opacity slider value
-        };
-        QRhiResourceUpdateBatch* uFill = r->nextResourceUpdateBatch();
-        uFill->updateDynamicBuffer(m_gpuSpecUbuf, 0, sizeof(fillColor), fillColor);
-        cb->resourceUpdate(uFill);
-
-        cb->setGraphicsPipeline(m_gpuSpecFillPipeline);
-        cb->setShaderResources(m_gpuSpecSrb);
-        // Fill data starts after line data in the vertex buffer
-        const quint32 fillOffset = m_gpuSpecBinCount * 2 * sizeof(float);
-        const QRhiCommandBuffer::VertexInput fillBinding(m_gpuSpecVbuf, fillOffset);
-        cb->setVertexInput(0, 1, &fillBinding);
-        cb->draw(m_gpuSpecBinCount * 2);  // 2 vertices per bin (top + bottom)
-
-        // Draw line on top (fully opaque)
+    // GPU spectrum LINE only — fill is rendered by QPainter in the overlay
+    if (m_gpuSpecLinePipeline && m_gpuSpecBinCount > 0) {
         float lineColor[4] = {
             static_cast<float>(m_fftFillColor.redF()),
             static_cast<float>(m_fftFillColor.greenF()),
