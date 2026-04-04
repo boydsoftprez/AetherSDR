@@ -1,6 +1,10 @@
 #pragma once
 
+#ifdef HAVE_RHI
+#include <QRhiWidget>
+#else
 #include <QWidget>
+#endif
 #include <QPushButton>
 #include <QVector>
 #include <QMap>
@@ -8,9 +12,17 @@
 #include <QColor>
 #include <QDateTime>
 
+#ifdef HAVE_RHI
+QT_FORWARD_DECLARE_CLASS(QRhiBuffer)
+QT_FORWARD_DECLARE_CLASS(QRhiTexture)
+QT_FORWARD_DECLARE_CLASS(QRhiSampler)
+QT_FORWARD_DECLARE_CLASS(QRhiShaderResourceBindings)
+QT_FORWARD_DECLARE_CLASS(QRhiGraphicsPipeline)
+QT_FORWARD_DECLARE_CLASS(QRhiCommandBuffer)
+#endif
+
 namespace AetherSDR {
 
-class GpuSpectrumRenderer;
 class SpectrumOverlayMenu;
 class VfoWidget;
 
@@ -26,7 +38,11 @@ class VfoWidget;
 //   - VFO marker: vertical orange line at the tuned VFO frequency
 //
 // Click anywhere in the spectrum/waterfall area to emit frequencyClicked().
+#ifdef HAVE_RHI
+class SpectrumWidget : public QRhiWidget {
+#else
 class SpectrumWidget : public QWidget {
+#endif
     Q_OBJECT
 
 public:
@@ -357,9 +373,37 @@ private:
 
     // Scrolling waterfall image (Format_RGB32)
 #ifdef HAVE_RHI
-    friend class WaterfallOverlayWidget;
-    GpuSpectrumRenderer* m_gpuRenderer{nullptr};
-    QWidget* m_wfOverlay{nullptr};
+protected:
+    void initialize(QRhiCommandBuffer* cb) override;
+    void render(QRhiCommandBuffer* cb) override;
+    void releaseResources() override;
+
+private:
+    void createWaterfallTexture();
+    void gpuUploadRow(const quint32* bgraRow, int row, int width);
+    void renderOverlaysToImage();
+
+    bool m_gpuInitialized{false};
+    QRhiBuffer* m_gpuVbuf{nullptr};
+    QRhiBuffer* m_gpuUbuf{nullptr};
+    QRhiTexture* m_gpuWfTexture{nullptr};
+    QRhiTexture* m_gpuOverlayTexture{nullptr};
+    QRhiSampler* m_gpuSampler{nullptr};
+    QRhiShaderResourceBindings* m_gpuSrb{nullptr};
+    QRhiGraphicsPipeline* m_gpuPipeline{nullptr};
+    QRhiShaderResourceBindings* m_gpuOverlaySrb{nullptr};
+    QRhiGraphicsPipeline* m_gpuOverlayPipeline{nullptr};
+
+    struct GpuPendingRow { int row; QByteArray data; };
+    QVector<GpuPendingRow> m_gpuPendingRows;
+    int m_gpuTexWidth{0};
+    int m_gpuTexHeight{0};
+    bool m_gpuNeedsTexRecreate{false};
+    bool m_gpuTexCleared{false};
+    bool m_gpuWfSeeded{false};  // true after QImage bulk-uploaded to GPU texture
+    QImage m_overlayCache;          // offscreen QPainter overlay
+    bool m_overlayDirty{true};      // true when overlays need re-render
+    bool m_overlayUploaded{false};  // true after overlay texture uploaded
 #endif
     QImage m_waterfall;
     int    m_wfWriteRow{0};  // ring buffer: next row to write (newest at top)

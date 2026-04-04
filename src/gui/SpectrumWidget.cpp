@@ -3,7 +3,8 @@
 #include "VfoWidget.h"
 #include "SliceColors.h"
 #ifdef HAVE_RHI
-#include "GpuSpectrumRenderer.h"
+#include <rhi/qrhi.h>
+#include <QFile>
 #endif
 
 #include <QPainter>
@@ -37,58 +38,58 @@
 namespace AetherSDR {
 
 #ifdef HAVE_RHI
-/// Transparent overlay for QPainter content above the GPU waterfall.
-class WaterfallOverlayWidget : public QWidget {
-public:
-    explicit WaterfallOverlayWidget(SpectrumWidget* sw)
-        : QWidget(sw, Qt::Widget), m_sw(sw)
-    {
-        setAttribute(Qt::WA_NativeWindow);
-        setAttribute(Qt::WA_TranslucentBackground);
-        setAttribute(Qt::WA_TransparentForMouseEvents);
-        setAttribute(Qt::WA_NoSystemBackground);
-        setAutoFillBackground(false);
+static QShader loadShader(const QString& path)
+{
+    QFile f(path);
+    if (!f.open(QIODevice::ReadOnly)) {
+        qWarning() << "SpectrumWidget: failed to load shader" << path;
+        return {};
     }
-protected:
-    void paintEvent(QPaintEvent*) override {
-        QPainter p(this);
-        p.setRenderHint(QPainter::Antialiasing, false);
-        const int chromeH = 20 + 4; // FREQ_SCALE_H + DIVIDER_H
-        const int contentH = m_sw->height() - chromeH;
-        const int specH = static_cast<int>(contentH * m_sw->m_spectrumFrac);
-        const int wfY = specH + chromeH;
-        const QRect wfRect(0, 0, width(), height());
-        const QRect specRect(0, -wfY, m_sw->width(), specH);
-        m_sw->drawTimeScale(p, wfRect);
-        m_sw->drawTnfMarkers(p, specRect, wfRect);
-        m_sw->drawSliceMarkers(p, specRect, wfRect);
-    }
-private:
-    SpectrumWidget* m_sw;
+    return QShader::fromSerialized(f.readAll());
+}
+
+static constexpr float kQuadVertices[] = {
+    -1.0f,  1.0f, 0.0f, 0.0f,
+    -1.0f, -1.0f, 0.0f, 1.0f,
+     1.0f,  1.0f, 1.0f, 0.0f,
+     1.0f, -1.0f, 1.0f, 1.0f,
 };
 #endif
 
 SpectrumWidget::SpectrumWidget(QWidget* parent)
+#ifdef HAVE_RHI
+    : QRhiWidget(parent)
+#else
     : QWidget(parent)
+#endif
 {
     setMinimumHeight(150);
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     setAutoFillBackground(false);
+#ifndef HAVE_RHI
     setAttribute(Qt::WA_OpaquePaintEvent);
+#endif
     setCursor(Qt::CrossCursor);
     setMouseTracking(true);
+
+#ifdef HAVE_RHI
+#if defined(Q_OS_MACOS)
+    setApi(Api::Metal);
+#elif defined(Q_OS_WIN)
+    setApi(Api::Direct3D11);
+#else
+    setApi(Api::OpenGL);
+#endif
+#endif
+
+#ifdef HAVE_RHI
+    // Force native window creation for QRhiWidget GPU surface
+    setAttribute(Qt::WA_NativeWindow);
+#endif
 
     // Floating overlay menu (child widget, stays on top)
     m_overlayMenu = new SpectrumOverlayMenu(this);
     m_overlayMenu->raise();
-
-#ifdef HAVE_RHI
-    m_gpuRenderer = new GpuSpectrumRenderer(this);
-    m_gpuRenderer->show();
-    m_wfOverlay = new WaterfallOverlayWidget(this);
-    m_wfOverlay->show();
-    m_wfOverlay->raise();
-#endif
 
     // Load display settings (panIndex 0 by default — loadSettings() can be
     // called again after setPanIndex() for multi-pan)
@@ -530,6 +531,10 @@ void SpectrumWidget::updateSpectrum(const QVector<float>& binsDbm)
             pushWaterfallRow(binsDbm, m_waterfall.width());
     }
 
+#ifdef HAVE_RHI
+    // Render overlay QImage on the main thread (outside render() to keep GPU loop fast)
+    renderOverlaysToImage();
+#endif
     update();
 }
 
@@ -678,11 +683,13 @@ void SpectrumWidget::updateWaterfallRow(const QVector<float>& binsIntensity,
 
 #ifdef HAVE_RHI
     // GPU path: upload scanline directly, skip QImage ring buffer
-    if (m_gpuRenderer && m_gpuRenderer->isReady()) {
+    if (m_gpuInitialized) {
         for (int r = 0; r < rowsToPush; ++r) {
             m_wfWriteRow = (m_wfWriteRow - 1 + h) % h;
-            m_gpuRenderer->uploadRow(reinterpret_cast<const quint32*>(scanline.constData()),
-                                     m_wfWriteRow, destWidth);
+            // Write to BOTH QImage (for seeding/fallback) AND GPU texture
+            auto* row = reinterpret_cast<QRgb*>(bits + m_wfWriteRow * bpl);
+            std::memcpy(row, scanline.constData(), destWidth * sizeof(QRgb));
+            gpuUploadRow(reinterpret_cast<const quint32*>(row), m_wfWriteRow, destWidth);
         }
         m_prevTileScanline = scanline;
         update();
@@ -1570,17 +1577,13 @@ void SpectrumWidget::resizeEvent(QResizeEvent* ev)
         m_wfWriteRow = 0;
     }
 
-    // Position GPU renderer + overlay over waterfall area
+    // Notify GPU of waterfall texture size change
 #ifdef HAVE_RHI
-    if (m_gpuRenderer && wfHeight > 0 && width() > 0) {
-        const int specH = contentH - wfHeight;
-        const int wfY = specH + chromeH;
-        m_gpuRenderer->setGeometry(0, wfY, width(), wfHeight);
-        m_gpuRenderer->setWaterfallSize(width(), wfHeight);
-        if (m_wfOverlay) {
-            m_wfOverlay->setGeometry(0, wfY, width(), wfHeight);
-            m_wfOverlay->raise();
-        }
+    if (wfHeight > 0 && width() > 0 && (width() != m_gpuTexWidth || wfHeight != m_gpuTexHeight)) {
+        m_gpuTexWidth = width();
+        m_gpuTexHeight = wfHeight;
+        m_gpuNeedsTexRecreate = true;
+        m_overlayDirty = true;
     }
 #endif
 
@@ -1694,16 +1697,19 @@ void SpectrumWidget::pushWaterfallRow(const QVector<float>& bins, int destWidth,
 
 #ifdef HAVE_RHI
     // GPU path: color-map into a temp buffer and upload directly — skip QImage entirely
-    if (m_gpuRenderer && m_gpuRenderer->isReady() && h > 1) {
+    if (m_gpuInitialized && h > 1) {
         m_wfWriteRow = (m_wfWriteRow - 1 + h) % h;
-        QVector<quint32> rowBuf(destWidth);
+
+        // Write to BOTH QImage (for seeding/fallback) AND GPU texture
+        uchar* bits = m_waterfall.bits();
+        const qsizetype bpl = m_waterfall.bytesPerLine();
+        auto* row = reinterpret_cast<QRgb*>(bits + m_wfWriteRow * bpl);
         for (int x = 0; x < destWidth; ++x) {
             const int binIdx = x * bins.size() / destWidth;
             const float dbm = (binIdx >= 0 && binIdx < bins.size()) ? bins[binIdx] : m_wfMinDbm;
-            rowBuf[x] = dbmToRgb(dbm);
+            row[x] = dbmToRgb(dbm);
         }
-        m_gpuRenderer->uploadRow(rowBuf.constData(), m_wfWriteRow, destWidth);
-        m_gpuRenderer->setWriteRow(m_wfWriteRow);
+        gpuUploadRow(reinterpret_cast<const quint32*>(row), m_wfWriteRow, destWidth);
         return;
     }
 #endif
@@ -1726,9 +1732,16 @@ void SpectrumWidget::pushWaterfallRow(const QVector<float>& bins, int destWidth,
 
 // ─── Paint ────────────────────────────────────────────────────────────────────
 
-void SpectrumWidget::paintEvent(QPaintEvent*)
+void SpectrumWidget::paintEvent(QPaintEvent* ev)
 {
     if (width() <= 0 || height() <= FREQ_SCALE_H + DIVIDER_H + 2) return;
+
+#ifdef HAVE_RHI
+    // QRhiWidget::paintEvent triggers initialize() + render() internally.
+    // We MUST call it to keep the GPU pipeline running.
+    QRhiWidget::paintEvent(ev);
+    return;  // All rendering done via render() + overlay cache
+#endif
 
     QElapsedTimer frameTimer;
     frameTimer.start();
@@ -1783,10 +1796,7 @@ void SpectrumWidget::paintEvent(QPaintEvent*)
         drawOffScreenSlices(p, specRect);
     }
 
-#ifdef HAVE_RHI
-    if (m_wfOverlay && m_gpuRenderer && m_gpuRenderer->isReady())
-        m_wfOverlay->update();
-#endif
+    // (GPU mode returns early above — overlays handled in render())
 
     // Reposition all VFO widgets — deconflict flags so they fly away from each other
     // Split pairs always face each other: RX←  →TX
@@ -2026,7 +2036,7 @@ void SpectrumWidget::drawWaterfall(QPainter& p, const QRect& r)
 {
 #ifdef HAVE_RHI
     // GPU renderer handles waterfall — skip CPU blit
-    if (m_gpuRenderer && m_gpuRenderer->isReady())
+    if (m_gpuInitialized)
         return;
 #endif
 
@@ -2733,5 +2743,403 @@ void SpectrumWidget::drawOffScreenSlices(QPainter& p, const QRect& specRect)
         else         p.drawText(boxX + padH, freqY, freqStr);
     }
 }
+
+// ─── QRhiWidget GPU rendering ────────────────────────────────────────────────
+#ifdef HAVE_RHI
+
+void SpectrumWidget::gpuUploadRow(const quint32* bgraRow, int row, int width)
+{
+    if (width <= 0 || !bgraRow) return;
+    GpuPendingRow pr;
+    pr.row = row;
+    pr.data = QByteArray(reinterpret_cast<const char*>(bgraRow), width * 4);
+    m_gpuPendingRows.append(std::move(pr));
+    update();
+}
+
+void SpectrumWidget::renderOverlaysToImage()
+{
+    const QSize sz = size();
+    if (sz.isEmpty()) return;
+
+    // Render at logical pixel size (1x) — faster QPainter + smaller texture upload.
+    // GPU scaling handles the Retina upscale. Text is slightly less sharp but
+    // the 4x reduction in data keeps the render loop fast.
+    if (m_overlayCache.size() != sz)
+        m_overlayCache = QImage(sz, QImage::Format_ARGB32_Premultiplied);
+    m_overlayCache.fill(Qt::transparent);
+
+    QPainter p(&m_overlayCache);
+    p.setRenderHint(QPainter::Antialiasing, false);
+
+    const int chromeH  = FREQ_SCALE_H + DIVIDER_H;
+    const int contentH = height() - chromeH;
+    const int specH    = static_cast<int>(contentH * m_spectrumFrac);
+    const int wfH      = contentH - specH;
+    const int divY     = specH;
+    const int scaleY   = specH + DIVIDER_H;
+    const int wfY      = scaleY + FREQ_SCALE_H;
+
+    const QRect specRect (0, 0,       width(), specH);
+    const QRect divRect  (0, divY,    width(), DIVIDER_H);
+    const QRect scaleRect(0, scaleY,  width(), FREQ_SCALE_H);
+    const QRect wfRect   (0, wfY,     width(), wfH);
+
+    // Background
+    if (m_bgImage.isNull()) {
+        p.fillRect(specRect, QColor(0x0a, 0x0a, 0x14));
+    } else {
+        if (m_bgScaledSize != specRect.size()) {
+            m_bgScaled = m_bgImage.scaled(specRect.size(), Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+            m_bgScaledSize = specRect.size();
+        }
+        p.drawImage(specRect.topLeft(), m_bgScaled);
+        int alpha = m_bgOpacity * 255 / 100;
+        p.fillRect(specRect, QColor(0x0a, 0x0a, 0x14, alpha));
+    }
+
+    drawGrid(p, specRect);
+    drawSpectrum(p, specRect);
+    if (m_bandPlanFontSize > 0) drawBandPlan(p, specRect);
+    drawDbmScale(p, specRect);
+
+    // Divider
+    p.fillRect(divRect, QColor(0x18, 0x28, 0x38));
+    p.setPen(QColor(m_draggingDivider ? 0x00b4d8 : 0x304050));
+    p.drawLine(divRect.left(), divRect.center().y(), divRect.right(), divRect.center().y());
+
+    drawFreqScale(p, scaleRect);
+    // Waterfall area is rendered by GPU — don't draw here
+    // But DO draw overlays on top of the waterfall area
+    drawTimeScale(p, wfRect);
+    drawTnfMarkers(p, specRect, wfRect);
+    if (m_showSpots) drawSpotMarkers(p, specRect);
+    drawSliceMarkers(p, specRect, wfRect);
+    drawOffScreenSlices(p, specRect);
+
+    p.end();
+    m_overlayDirty = false;
+    m_overlayUploaded = false;  // needs GPU upload in next render()
+}
+
+void SpectrumWidget::createWaterfallTexture()
+{
+    QRhi* r = rhi();
+    if (!r) return;
+
+    if (m_gpuWfTexture) { m_gpuWfTexture->destroy(); delete m_gpuWfTexture; m_gpuWfTexture = nullptr; }
+    if (m_gpuOverlayTexture) { m_gpuOverlayTexture->destroy(); delete m_gpuOverlayTexture; m_gpuOverlayTexture = nullptr; }
+
+    if (m_gpuTexWidth <= 0 || m_gpuTexHeight <= 0) return;
+
+    // Waterfall texture (BGRA8, ring buffer)
+    m_gpuWfTexture = r->newTexture(QRhiTexture::BGRA8, QSize(m_gpuTexWidth, m_gpuTexHeight));
+    if (!m_gpuWfTexture->create()) {
+        delete m_gpuWfTexture; m_gpuWfTexture = nullptr;
+        return;
+    }
+
+    // Overlay texture at logical pixel size (1x — GPU scales to Retina)
+    m_gpuOverlayTexture = r->newTexture(QRhiTexture::BGRA8, size());
+    if (!m_gpuOverlayTexture->create()) {
+        delete m_gpuOverlayTexture; m_gpuOverlayTexture = nullptr;
+    }
+
+    // Queue black clear for waterfall
+    GpuPendingRow fullClear;
+    fullClear.row = -1;
+    fullClear.data = QByteArray(m_gpuTexWidth * m_gpuTexHeight * 4, '\0');
+    m_gpuPendingRows.clear();
+    m_gpuPendingRows.append(std::move(fullClear));
+
+    // Rebuild SRB
+    if (m_gpuSrb) { m_gpuSrb->destroy(); delete m_gpuSrb; }
+    m_gpuSrb = r->newShaderResourceBindings();
+    m_gpuSrb->setBindings({
+        QRhiShaderResourceBinding::uniformBuffer(0,
+            QRhiShaderResourceBinding::VertexStage | QRhiShaderResourceBinding::FragmentStage,
+            m_gpuUbuf),
+        QRhiShaderResourceBinding::sampledTexture(1, QRhiShaderResourceBinding::FragmentStage,
+            m_gpuWfTexture, m_gpuSampler),
+    });
+    m_gpuSrb->create();
+
+    // Rebuild pipeline
+    if (m_gpuPipeline) { m_gpuPipeline->destroy(); delete m_gpuPipeline; }
+    m_gpuPipeline = r->newGraphicsPipeline();
+    m_gpuPipeline->setShaderStages({
+        { QRhiShaderStage::Vertex, loadShader(":/shaders/waterfall.vert.qsb") },
+        { QRhiShaderStage::Fragment, loadShader(":/shaders/waterfall.frag.qsb") },
+    });
+    QRhiVertexInputLayout inputLayout;
+    inputLayout.setBindings({ { 4 * sizeof(float) } });
+    inputLayout.setAttributes({
+        { 0, 0, QRhiVertexInputAttribute::Float2, 0 },
+        { 0, 1, QRhiVertexInputAttribute::Float2, 2 * sizeof(float) },
+    });
+    m_gpuPipeline->setVertexInputLayout(inputLayout);
+    m_gpuPipeline->setTopology(QRhiGraphicsPipeline::TriangleStrip);
+    m_gpuPipeline->setShaderResourceBindings(m_gpuSrb);
+    m_gpuPipeline->setRenderPassDescriptor(renderTarget()->renderPassDescriptor());
+    m_gpuPipeline->create();
+
+    // Overlay SRB + pipeline (same shaders, but samples overlay texture with alpha blending)
+    if (m_gpuOverlayTexture) {
+        if (m_gpuOverlaySrb) { m_gpuOverlaySrb->destroy(); delete m_gpuOverlaySrb; }
+        m_gpuOverlaySrb = r->newShaderResourceBindings();
+        m_gpuOverlaySrb->setBindings({
+            QRhiShaderResourceBinding::uniformBuffer(0,
+                QRhiShaderResourceBinding::VertexStage | QRhiShaderResourceBinding::FragmentStage,
+                m_gpuUbuf),
+            QRhiShaderResourceBinding::sampledTexture(1, QRhiShaderResourceBinding::FragmentStage,
+                m_gpuOverlayTexture, m_gpuSampler),
+        });
+        m_gpuOverlaySrb->create();
+
+        if (m_gpuOverlayPipeline) { m_gpuOverlayPipeline->destroy(); delete m_gpuOverlayPipeline; }
+        m_gpuOverlayPipeline = r->newGraphicsPipeline();
+        m_gpuOverlayPipeline->setShaderStages({
+            { QRhiShaderStage::Vertex, loadShader(":/shaders/waterfall.vert.qsb") },
+            { QRhiShaderStage::Fragment, loadShader(":/shaders/waterfall.frag.qsb") },
+        });
+        m_gpuOverlayPipeline->setVertexInputLayout(inputLayout);
+        m_gpuOverlayPipeline->setTopology(QRhiGraphicsPipeline::TriangleStrip);
+        // Enable alpha blending for overlay compositing
+        QRhiGraphicsPipeline::TargetBlend blend;
+        blend.enable = true;
+        // Premultiplied alpha: QImage ARGB32_Premultiplied has RGB pre-multiplied by A
+        blend.srcColor = QRhiGraphicsPipeline::One;  // NOT SrcAlpha — already premultiplied
+        blend.dstColor = QRhiGraphicsPipeline::OneMinusSrcAlpha;
+        blend.srcAlpha = QRhiGraphicsPipeline::One;
+        blend.dstAlpha = QRhiGraphicsPipeline::OneMinusSrcAlpha;
+        m_gpuOverlayPipeline->setTargetBlends({ blend });
+        m_gpuOverlayPipeline->setShaderResourceBindings(m_gpuOverlaySrb);
+        m_gpuOverlayPipeline->setRenderPassDescriptor(renderTarget()->renderPassDescriptor());
+        m_gpuOverlayPipeline->create();
+    }
+
+    m_gpuNeedsTexRecreate = false;
+    m_gpuTexCleared = false;
+    m_gpuWfSeeded = false;
+    m_overlayDirty = true;
+
+    qDebug() << "SpectrumWidget: GPU textures created" << m_gpuTexWidth << "x" << m_gpuTexHeight;
+}
+
+void SpectrumWidget::initialize(QRhiCommandBuffer* cb)
+{
+    Q_UNUSED(cb);
+    QRhi* r = rhi();
+    if (!r) { m_gpuInitialized = false; return; }
+
+    qDebug() << "SpectrumWidget: GPU init on" << r->backendName()
+             << "driver:" << r->driverInfo().deviceName;
+
+    // Dynamic: waterfall quad position changes based on spectrum/waterfall split
+    m_gpuVbuf = r->newBuffer(QRhiBuffer::Dynamic, QRhiBuffer::VertexBuffer,
+                              sizeof(kQuadVertices) * 3);  // room for wf top + wf bottom + overlay quads
+    m_gpuVbuf->create();
+    m_gpuUbuf = r->newBuffer(QRhiBuffer::Dynamic, QRhiBuffer::UniformBuffer, 4 * sizeof(float));
+    m_gpuUbuf->create();
+    m_gpuSampler = r->newSampler(QRhiSampler::Linear, QRhiSampler::Linear, QRhiSampler::None,
+                                  QRhiSampler::ClampToEdge, QRhiSampler::ClampToEdge);
+    m_gpuSampler->create();
+
+    if (m_gpuTexWidth > 0 && m_gpuTexHeight > 0)
+        createWaterfallTexture();
+
+    m_gpuInitialized = true;
+}
+
+void SpectrumWidget::render(QRhiCommandBuffer* cb)
+{
+    // Phase 1A diagnostic: measure actual render FPS
+    {
+        static qint64 lastMs = 0;
+        static int frameCount = 0;
+        qint64 now = QDateTime::currentMSecsSinceEpoch();
+        ++frameCount;
+        if (lastMs > 0 && now - lastMs >= 2000) {
+            float fps = frameCount * 1000.0f / (now - lastMs);
+            qWarning() << "GPU render FPS:" << fps
+                       << "pending rows:" << m_gpuPendingRows.size()
+                       << "overlayDirty:" << m_overlayDirty;
+            frameCount = 0;
+            lastMs = now;
+        }
+        if (lastMs == 0) lastMs = now;
+    }
+    if (!m_gpuInitialized) return;
+    QRhi* r = rhi();
+
+    if (m_gpuNeedsTexRecreate && m_gpuTexWidth > 0 && m_gpuTexHeight > 0)
+        createWaterfallTexture();
+
+    // Overlay QImage is rendered in updateSpectrum() on the main thread,
+    // NOT here in render() — keeps the GPU render loop fast.
+
+    const QColor bgColor(0x0a, 0x0a, 0x14);
+
+    if (!m_gpuWfTexture || !m_gpuPipeline) {
+        cb->beginPass(renderTarget(), bgColor, {1.0f, 0});
+        cb->endPass();
+        return;
+    }
+
+    QRhiResourceUpdateBatch* u = r->nextResourceUpdateBatch();
+
+    // Seed GPU texture from QImage waterfall on first data arrival.
+    // This eliminates the "wiper from black" effect — the GPU texture
+    // starts with the same content as the QImage ring buffer.
+    if (!m_gpuWfSeeded && !m_waterfall.isNull() && m_gpuTexCleared
+            && m_waterfall.width() == m_gpuTexWidth
+            && m_waterfall.height() == m_gpuTexHeight) {
+        const uchar* bits = m_waterfall.constBits();
+        const qsizetype bpl = m_waterfall.bytesPerLine();
+        for (int row = 0; row < m_gpuTexHeight; ++row) {
+            QRhiTextureSubresourceUploadDescription sub(bits + row * bpl, m_gpuTexWidth * 4);
+            sub.setDestinationTopLeft(QPoint(0, row));
+            sub.setSourceSize(QSize(m_gpuTexWidth, 1));
+            u->uploadTexture(m_gpuWfTexture, QRhiTextureUploadEntry(0, 0, sub));
+        }
+        m_gpuWfSeeded = true;
+        qDebug() << "SpectrumWidget: GPU waterfall seeded from QImage"
+                 << m_gpuTexWidth << "x" << m_gpuTexHeight;
+    }
+
+    // Upload pending waterfall rows
+    for (const auto& pr : m_gpuPendingRows) {
+        if (pr.row == -1 && pr.data.size() == m_gpuTexWidth * m_gpuTexHeight * 4) {
+            QRhiTextureSubresourceUploadDescription sub(pr.data.constData(), pr.data.size());
+            u->uploadTexture(m_gpuWfTexture, QRhiTextureUploadEntry(0, 0, sub));
+            m_gpuTexCleared = true;
+        } else if (pr.row >= 0 && pr.row < m_gpuTexHeight && pr.data.size() == m_gpuTexWidth * 4) {
+            QRhiTextureSubresourceUploadDescription sub(pr.data.constData(), pr.data.size());
+            sub.setDestinationTopLeft(QPoint(0, pr.row));
+            sub.setSourceSize(QSize(m_gpuTexWidth, 1));
+            u->uploadTexture(m_gpuWfTexture, QRhiTextureUploadEntry(0, 0, sub));
+        }
+    }
+    m_gpuPendingRows.clear();
+
+    // Upload overlay QImage as texture
+    if (m_gpuOverlayTexture && !m_overlayCache.isNull() && m_overlayUploaded == false) {
+        // Resize overlay texture if needed
+        if (m_gpuOverlayTexture->pixelSize() != m_overlayCache.size()) {
+            m_gpuOverlayTexture->destroy();
+            delete m_gpuOverlayTexture;
+            m_gpuOverlayTexture = r->newTexture(QRhiTexture::BGRA8, m_overlayCache.size());
+            m_gpuOverlayTexture->create();
+        }
+        QRhiTextureSubresourceUploadDescription overlaySub(m_overlayCache);
+        u->uploadTexture(m_gpuOverlayTexture, QRhiTextureUploadEntry(0, 0, overlaySub));
+        m_overlayUploaded = true;
+    }
+
+    // Compute waterfall position in NDC and ring buffer split.
+    // Replicate CPU drawWaterfall() two-part blit to avoid ring buffer seam:
+    //   Top part: texture rows [writeRow..texH-1] → newest data at display top
+    //   Bottom part: texture rows [0..writeRow-1] → oldest data at display bottom
+    const int chromeH = FREQ_SCALE_H + DIVIDER_H;
+    const int contentH = height() - chromeH;
+    const int specH = static_cast<int>(contentH * m_spectrumFrac);
+    const int wfY_pos = specH + chromeH;
+    const float wfTopNDC = 1.0f - 2.0f * static_cast<float>(wfY_pos) / height();
+    const float wfBotNDC = -1.0f;
+
+    const int texH = m_gpuTexHeight > 0 ? m_gpuTexHeight : 1;
+    const int topRows = texH - m_wfWriteRow;  // rows from writeRow to end
+    const int botRows = m_wfWriteRow;          // rows from 0 to writeRow
+
+    const float splitFrac = static_cast<float>(topRows) / texH;  // fraction of display for top part
+    const float splitNDC = wfTopNDC + (wfBotNDC - wfTopNDC) * splitFrac;  // NDC Y of split point
+
+    // UV coords map directly to texture regions (no fract wrapping)
+    const float uvWriteRow = static_cast<float>(m_wfWriteRow) / texH;
+
+    // Top quad: display [wfTop..split] → texture [writeRow/H .. 1.0]
+    const float topQuad[] = {
+        -1.0f, wfTopNDC, 0.0f, uvWriteRow,
+        -1.0f, splitNDC,  0.0f, 1.0f,
+         1.0f, wfTopNDC, 1.0f, uvWriteRow,
+         1.0f, splitNDC,  1.0f, 1.0f,
+    };
+    // Bottom quad: display [split..wfBot] → texture [0.0 .. writeRow/H]
+    const float botQuad[] = {
+        -1.0f, splitNDC,  0.0f, 0.0f,
+        -1.0f, wfBotNDC, 0.0f, uvWriteRow,
+         1.0f, splitNDC,  1.0f, 0.0f,
+         1.0f, wfBotNDC, 1.0f, uvWriteRow,
+    };
+
+    u->updateDynamicBuffer(m_gpuVbuf, 0, sizeof(topQuad), topQuad);
+    u->updateDynamicBuffer(m_gpuVbuf, sizeof(topQuad), sizeof(botQuad), botQuad);
+    u->updateDynamicBuffer(m_gpuVbuf, sizeof(topQuad) + sizeof(botQuad), sizeof(kQuadVertices), kQuadVertices);
+
+    // Update uniforms (writeRow not used by shader anymore, but keep for compatibility)
+    float uniforms[4] = {
+        uvWriteRow, static_cast<float>(texH), 0.0f, 0.0f
+    };
+    u->updateDynamicBuffer(m_gpuUbuf, 0, sizeof(uniforms), uniforms);
+
+    // Render — submit all resource updates with beginPass
+    const QSize outSz = renderTarget()->pixelSize();
+    if (!m_gpuTexCleared) {
+        cb->beginPass(renderTarget(), bgColor, {1.0f, 0}, u);
+        cb->endPass();
+        return;
+    }
+
+    cb->beginPass(renderTarget(), bgColor, {1.0f, 0}, u);
+
+    // Full-widget viewport for both draws
+    cb->setViewport({ 0, 0, static_cast<float>(outSz.width()), static_cast<float>(outSz.height()) });
+
+    // Draw waterfall as two quads (ring buffer split — no seam)
+    cb->setGraphicsPipeline(m_gpuPipeline);
+    cb->setShaderResources(m_gpuSrb);
+
+    // Top part: newest rows (texture rows writeRow..end)
+    if (topRows > 0) {
+        const QRhiCommandBuffer::VertexInput topBinding(m_gpuVbuf, 0);
+        cb->setVertexInput(0, 1, &topBinding);
+        cb->draw(4);
+    }
+
+    // Bottom part: older rows (texture rows 0..writeRow)
+    if (botRows > 0) {
+        const quint32 botOffset = sizeof(topQuad);
+        const QRhiCommandBuffer::VertexInput botBinding(m_gpuVbuf, botOffset);
+        cb->setVertexInput(0, 1, &botBinding);
+        cb->draw(4);
+    }
+
+    // Draw overlay quad — fullscreen, alpha blended on top
+    if (m_gpuOverlayPipeline && m_gpuOverlayTexture) {
+        cb->setGraphicsPipeline(m_gpuOverlayPipeline);
+        cb->setShaderResources(m_gpuOverlaySrb);
+        const quint32 ovOffset = sizeof(topQuad) + sizeof(botQuad);
+        const QRhiCommandBuffer::VertexInput ovBinding(m_gpuVbuf, ovOffset);
+        cb->setVertexInput(0, 1, &ovBinding);
+        cb->draw(4);
+    }
+
+    cb->endPass();
+}
+
+void SpectrumWidget::releaseResources()
+{
+    delete m_gpuPipeline; m_gpuPipeline = nullptr;
+    delete m_gpuSrb; m_gpuSrb = nullptr;
+    delete m_gpuSampler; m_gpuSampler = nullptr;
+    delete m_gpuOverlayTexture; m_gpuOverlayTexture = nullptr;
+    delete m_gpuWfTexture; m_gpuWfTexture = nullptr;
+    delete m_gpuUbuf; m_gpuUbuf = nullptr;
+    delete m_gpuVbuf; m_gpuVbuf = nullptr;
+    m_gpuInitialized = false;
+    m_gpuPendingRows.clear();
+}
+
+#endif // HAVE_RHI
 
 } // namespace AetherSDR

@@ -14,7 +14,7 @@ layout(std140, binding = 0) uniform Params {
 
 void main()
 {
-    // Ring buffer scroll: offset V coordinate by writeRow
-    float v = fract(v_uv.y + writeRow);
-    fragColor = texture(waterfallTex, vec2(v_uv.x, v));
+    // Simple passthrough — ring buffer split is handled by drawing two quads
+    // with pre-computed UV ranges (no fract wrapping, no seam).
+    fragColor = texture(waterfallTex, v_uv);
 }

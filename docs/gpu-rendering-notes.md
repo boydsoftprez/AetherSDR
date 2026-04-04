@@ -137,20 +137,138 @@ CPU sample: drawSpectrum dropped from 960 → 685 samples (29% reduction in FFT 
 
 ---
 
-## Architecture Decision
+---
 
-**Current:** QRhiWidget as child of SpectrumWidget (QWidget)
-- Pro: minimal changes to existing code
-- Con: WA_NativeWindow compositing overhead negates savings on macOS
+## Measurement 4: SpectrumWidget as QRhiWidget + offscreen overlay
 
-**Recommended:** SpectrumWidget inherits QRhiWidget directly
-- Pro: single GPU surface, no compositing overhead, QPainter composites for free
-- Con: larger refactor, all rendering must go through GPU or QPainter-on-QRhi
-- This is the path forward for Phase 3+
+Made SpectrumWidget inherit QRhiWidget directly. All QPainter content (spectrum
+line, grid, band plan, scales, slice markers, TNF, spots) rendered to an offscreen
+QImage (`m_overlayCache`), uploaded as a second GPU texture, alpha-composited over
+the waterfall in the GPU render pass.
+
+### Key finding: paintEvent MUST call QRhiWidget::paintEvent()
+Without calling the base class paintEvent, `initialize()` and `render()` are
+NEVER called — QRhiWidget's GPU pipeline is triggered by its own paintEvent.
+
+### Key finding: QPainter on QRhiWidget is broken on Metal
+`QPainter(this)` on a QRhiWidget returns inactive painter on Qt 6.11 Metal.
+Error: `QWidget::paintEngine: Should no longer be called`. The offscreen QImage
+approach bypasses this entirely — QPainter draws to QImage (always works), then
+the QImage is uploaded as a GPU texture.
+
+### Results
+
+| Config | CPU | Memory | Visual |
+|--------|-----|--------|--------|
+| QRhiWidget base, no overlay | ~17% | 298 MB | Waterfall only, no spectrum/overlays |
+| QRhiWidget + overlay (2x Retina) | ~52% | 520 MB | All overlays, waterfall slow |
+| QRhiWidget + overlay (1x) | ~37% | 509 MB | Smooth spectrum, blurry text, waterfall slow |
+| QRhiWidget + overlay render in render() | ~52% | 520 MB | Waterfall even slower (render() blocked) |
+| CPU-only baseline | ~110% | 298 MB | Everything smooth and fast |
+
+### Issues resolved
+1. **Waterfall scroll direction** — FIXED: flipped UV coords on waterfall quad
+   (`v=1 at top, v=0 at bottom` in vertex data)
+2. **Passband overlay invisible** — FIXED: premultiplied alpha blending
+   (srcColor = One, not SrcAlpha)
+3. **Waterfall quad positioning** — FIXED: NDC coordinates computed from
+   spectrum/waterfall split, dynamic vertex buffer
+
+### Issues remaining
+1. **Waterfall scroll speed much slower than CPU version** — ~25 rows/sec
+   data rate is SAME as CPU, but GPU version LOOKS slower. In CPU mode,
+   p.drawImage() blits the entire QImage (including already-filled rows)
+   instantly via Core Graphics hardware acceleration. GPU mode uploads
+   rows one-at-a-time to a texture that starts black, so the progressive
+   fill is visible. The fundamental issue: QRhiWidget render loop has
+   overhead from Metal command buffer management that reduces effective FPS.
+   
+2. **Text blurry at 1x overlay** — rendering overlay at logical pixels (1x)
+   makes text blurry on Retina. But 2x Retina means 5MB texture upload per
+   frame which tanks performance. Need a middle ground.
+
+3. **Overlay rendering cost** — QPainter renderOverlaysToImage() takes 6ms
+   at 2x Retina, ~2ms at 1x. Called every FFT frame (~25/sec). Combined
+   with 1.3MB (1x) or 5.3MB (2x) texture upload per frame, this dominates
+   the render budget.
+
+### Root cause analysis: why GPU is slower than CPU on macOS
+
+The core issue is that **macOS Core Graphics already GPU-accelerates QPainter**.
+When the CPU path calls `p.drawImage()`, `p.fillPath()`, `p.drawPolyline()`,
+Core Graphics sends these to the GPU internally via Metal. The CPU is mostly
+idle during rendering — Core Graphics does the compositing.
+
+Our QRhi approach replaces one Metal path (Core Graphics → Metal) with another
+(QRhi → Metal) but adds overhead:
+- QPainter → QImage offscreen render (CPU-bound, no CG acceleration)
+- QImage → GPU texture upload (memory copy, ~1-5 MB/frame)
+- QRhiWidget render loop (Metal command buffer setup/teardown)
+
+On Linux/Windows, Core Graphics doesn't exist. QPainter renders via software
+rasterizer (CPU-bound). There, QRhi would provide a real speedup because the
+GPU blit replaces a CPU blit. **This optimization is primarily for Linux.**
+
+### Possible paths forward
+
+**A) Ship as-is with ENABLE_RHI=OFF default on macOS**
+- macOS: CPU path with Core Graphics (fast, 110% CPU but that's CG doing GPU work)
+- Linux: GPU path with QRhi (would be faster than CPU on Linux)
+- Simplest, no visual regressions
+
+**B) Split overlay into static + dynamic layers**
+- Static: grid, band plan, scales, background → render once, upload once
+- Dynamic: spectrum line only → render to small QImage (~300px height), upload each frame
+- Reduces per-frame overlay cost from 5MB to ~0.5MB
+
+**C) Move ALL rendering to GPU shaders (no QPainter)**
+- Spectrum line as vertex buffer + line draw
+- Grid as line primitives
+- Text pre-rendered to texture atlas
+- Most complex but eliminates QPainter entirely
+
+**D) Use QOpenGLWidget instead of QRhiWidget**
+- QPainter compositing works on QOpenGLWidget (proven Qt feature)
+- OpenGL deprecated on macOS but still functional
+- Simpler integration, no offscreen QImage needed
+4. **Overlay uploaded every FFT frame** — could be optimized with dirty flag to skip
+   upload when overlays haven't changed
+
+### Architecture (current working approach)
+
+```
+SpectrumWidget : QRhiWidget
+  │
+  ├─ initialize() — create GPU resources (vbuf, ubuf, textures, pipelines)
+  ├─ render()     — upload waterfall rows + overlay QImage, draw two quads
+  │   1. Waterfall quad (BGRA8 ring buffer texture, UV scroll)
+  │   2. Overlay quad (BGRA8 from QImage, alpha blended)
+  │
+  ├─ paintEvent() — calls QRhiWidget::paintEvent() then returns
+  │   (QPainter on QRhiWidget doesn't work on Metal)
+  │
+  ├─ renderOverlaysToImage() — QPainter → m_overlayCache QImage
+  │   draws: background, grid, spectrum, band plan, scales,
+  │   divider, time scale, TNF, spots, slice markers
+  │   waterfall area left transparent for GPU waterfall to show through
+  │
+  └─ gpuUploadRow() — queue BGRA row for GPU texture upload
+```
+
+### Remaining work
+- Fix waterfall scroll direction (shader UV offset sign)
+- Fix waterfall rendering speed/smoothness
+- Fix Retina DPR for overlay QImage (blurry text)
+- Optimize overlay uploads (dirty flag, skip when unchanged)
+- Test mouse events (click-to-tune, scroll) — QRhiWidget inherits QWidget events
+- Test VFO widget positioning (child QWidgets on QRhiWidget)
+- Remove debug render() frame counter
+- Profile and compare with baseline
 
 ## Measurements To Take Next
-- [ ] SpectrumWidget-as-QRhiWidget: CPU baseline
-- [ ] GPU waterfall + GPU FFT polyline: CPU comparison
+- [x] SpectrumWidget-as-QRhiWidget: ~17-29% CPU (confirmed)
+- [ ] After waterfall fix: smoothness + CPU
+- [ ] After Retina DPR fix: text sharpness
 - [ ] Linux (OpenGL): verify GPU actually helps where CG doesn't
 - [ ] 4-pan multi-pan: GPU vs CPU comparison
 - [ ] High FPS (50 FPS waterfall): GPU vs CPU comparison
