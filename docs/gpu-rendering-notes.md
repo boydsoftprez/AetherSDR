@@ -316,3 +316,106 @@ first compositor frame.
 - Use QQuickWidget with QQuickRenderControl instead of QRhiWidget
 - Parent widget paints black behind SpectrumWidget before it's shown
 - Override QRhiWidget::event() to intercept the Show event and force a render
+
+---
+
+## Measurement 6: Waterfall two-quad split + VFO positioning fix
+
+**Date:** 2026-04-04
+
+Fixed the "wiper" effect by replacing single-quad `fract()` UV wrapping with
+two-quad ring buffer split (matching CPU drawWaterfall). Fixed VFO widget
+positioning which was broken by GPU mode's early paintEvent return.
+
+### Waterfall fix
+
+The `fract(v_uv.y ± writeRow)` approach created a visible seam (wiper line)
+sweeping through the display as `writeRow` changed. The seam is where the
+ring buffer wraps — oldest row adjacent to newest row.
+
+**Fix:** Draw two separate quads with direct UV mapping, no `fract()`:
+- Top quad: texture rows [writeRow..end] → newest data at display top
+- Bottom quad: texture rows [0..writeRow] → oldest data at display bottom
+
+This replicates the CPU path's two-part `p.drawImage()` blit. The shader
+became a simple passthrough (`fragColor = texture(waterfallTex, v_uv)`).
+
+Also seed GPU texture from QImage on first render and on resize, so waterfall
+starts populated instead of filling from black.
+
+### VFO positioning fix
+
+`paintEvent()` returns early in HAVE_RHI mode (after calling
+`QRhiWidget::paintEvent()`), which skipped the VFO widget repositioning
+code that runs later in the CPU paintEvent path.
+
+**Problem:** Moving the VFO positioning INTO paintEvent caused a repaint
+cascade — `VfoWidget::updatePosition()` calls `move()`, which triggers a
+repaint of the parent QRhiWidget, which calls paintEvent again → infinite loop.
+
+**Fix:** Event-driven VFO positioning in data callbacks instead of paintEvent:
+- `setVfoFrequency()`: fires on tune → immediate position update
+- `setSliceOverlayFreq()`: fires on frequency status → guarded by change check
+- `setSliceOverlay()`: fires on slice create → sets initial position on launch
+- `setFrequencyRange()`: fires on zoom/scroll → guarded by range change check
+
+Guards (`freqChanged`, `rangeChanged`) prevent `updatePosition()` from firing
+when data hasn't actually changed, avoiding repaint cascade.
+
+### Results
+
+| Metric | Before (Meas 5) | After (Meas 6) |
+|--------|-----------------|-----------------|
+| CPU % | ~39-52% | ~53% |
+| Waterfall | Wiper effect, slow fill | Smooth scroll, seeded |
+| VFO position on launch | Wrong | Correct |
+| VFO tracking on tune | Detached | Smooth, correct |
+| Spectrum line | Via QPainter overlay | Via QPainter overlay |
+| Text | Sharp (2x Retina) | Sharp (2x Retina) |
+| Resize | No pink flash | No pink flash |
+| Startup | Pink flash | Pink flash |
+
+CPU slightly higher (53% vs 39-52%) due to VFO updatePosition calls triggering
+extra repaints. Acceptable tradeoff for correct VFO behavior.
+
+---
+
+## Progress Summary
+
+| Phase | Status | CPU Impact |
+|-------|--------|-----------|
+| Baseline (QPainter) | Reference | 110% |
+| Phase 1: GPU waterfall + overlay | Complete | 53% (-52%) |
+| Phase 2: Spectrum line GPU vertex buffer | Not started | Target: ~35% |
+| Phase 3: Grid + geometric overlays GPU | Not started | Target: ~25% |
+| Phase 4: Text-only cached overlay | Not started | Target: ~17-22% |
+| Phase 5: Polish + cross-platform | Not started | — |
+| Phase 6: Submit PR | Not started | — |
+
+### What's working
+- SpectrumWidget inherits QRhiWidget (Metal backend, M1 Pro)
+- Waterfall: BGRA8 ring buffer texture, two-quad split, seeded from QImage
+- Overlay: offscreen QPainter → QImage → GPU texture, premultiplied alpha
+- VFO: event-driven positioning, correct on launch and tune
+- Resize: no pink flash (repaint() fix)
+- Passband, slice markers, TNF, grid, text: all visible via overlay
+
+### What's remaining
+- Phase 2: move spectrum polyline from overlay to GPU LineStrip vertex buffer
+- Phase 3: move grid, passband, TNF from overlay to GPU Lines/Triangles
+- Phase 4: cache text-only overlay (only re-render on zoom/scroll/resize)
+- Startup pink flash: known Qt Metal limitation
+- Mouse events: click-to-tune, scroll-to-tune need testing
+- Multi-pan: untested
+
+## Measurements To Take Next
+- [x] SpectrumWidget-as-QRhiWidget: ~17-53% CPU (confirmed, varies by overlay load)
+- [x] After waterfall fix: smooth scrolling at 47-50 FPS
+- [x] After Retina DPR fix: text sharp at 2x device pixel ratio
+- [x] After VFO fix: correct positioning on launch and tune
+- [ ] Phase 2: spectrum GPU vertex buffer CPU impact
+- [ ] Phase 3: geometric overlays GPU CPU impact
+- [ ] Phase 4: cached text overlay CPU impact
+- [ ] Linux (OpenGL): verify GPU path helps where CG doesn't
+- [ ] 4-pan multi-pan: GPU vs CPU comparison
+- [ ] Mouse events: click-to-tune, scroll-to-tune verification
