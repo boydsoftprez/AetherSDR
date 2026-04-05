@@ -1777,7 +1777,11 @@ void SpectrumWidget::initOverlayPipeline()
 
     int w = qMax(width(), 64);
     int h = qMax(height(), 64);
-    const qreal dpr = devicePixelRatioF();
+    // Derive DPR from render target — on Windows, devicePixelRatioF() may
+    // return 1.0 even with DPI scaling, but the render target is at the
+    // actual physical resolution.
+    const QSize rtPx = renderTarget()->pixelSize();
+    const qreal dpr = qMax(1.0, static_cast<qreal>(rtPx.width()) / w);
     const int pw = static_cast<int>(w * dpr);
     const int ph = static_cast<int>(h * dpr);
     m_ovGpuTex = r->newTexture(QRhiTexture::RGBA8, QSize(pw, ph));
@@ -1818,10 +1822,12 @@ void SpectrumWidget::initOverlayPipeline()
     m_ovPipeline->setShaderResourceBindings(m_ovSrb);
     m_ovPipeline->setRenderPassDescriptor(renderTarget()->renderPassDescriptor());
 
-    // Enable alpha blending for overlay compositing
+    // Premultiplied alpha blending — overlay QImage is Format_RGBA8888_Premultiplied,
+    // so colors are already multiplied by alpha. Using SrcAlpha would double-multiply,
+    // darkening anti-aliased text edges and making them appear blurry.
     QRhiGraphicsPipeline::TargetBlend blend;
     blend.enable = true;
-    blend.srcColor = QRhiGraphicsPipeline::SrcAlpha;
+    blend.srcColor = QRhiGraphicsPipeline::One;
     blend.dstColor = QRhiGraphicsPipeline::OneMinusSrcAlpha;
     blend.srcAlpha = QRhiGraphicsPipeline::One;
     blend.dstAlpha = QRhiGraphicsPipeline::OneMinusSrcAlpha;
@@ -2040,8 +2046,9 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
 
     // Render overlays — split into static (on state change) and dynamic (every frame)
     {
-        // Resize overlay images if needed
-        const qreal dpr = devicePixelRatioF();
+        // Resize overlay images if needed — derive DPR from render target
+        const QSize rtPx = renderTarget()->pixelSize();
+        const qreal dpr = qMax(1.0, static_cast<qreal>(rtPx.width()) / w);
         const int pw = static_cast<int>(w * dpr);
         const int ph = static_cast<int>(h * dpr);
         if (m_overlayStatic.size() != QSize(pw, ph)) {
