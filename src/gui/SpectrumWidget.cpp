@@ -329,6 +329,7 @@ void SpectrumWidget::clearDisplay()
     if (!m_waterfall.isNull())
         m_waterfall.fill(Qt::black);
     m_wfWriteRow = 0;
+    m_overlayDirty = true;
     update();
 }
 
@@ -362,6 +363,7 @@ void SpectrumWidget::setSpectrumFrac(float f)
     auto& s = AppSettings::instance();
     s.setValue(settingsKey("SpectrumSplitRatio"), QString::number(m_spectrumFrac, 'f', 3));
     s.save();
+    m_overlayDirty = true;
     update();
 }
 
@@ -466,6 +468,7 @@ void SpectrumWidget::setSplitPair(int rxSliceId, int txSliceId)
         if (rxIdx >= 0) m_sliceOverlays[rxIdx].splitPartnerId = txSliceId;
         if (txIdx >= 0) m_sliceOverlays[txIdx].splitPartnerId = rxSliceId;
     }
+    m_overlayDirty = true;
     update();
 }
 
@@ -495,7 +498,7 @@ void SpectrumWidget::setVfoFilter(int lowHz, int highHz)
 void SpectrumWidget::setSliceInfo(int sliceId, bool isTxSlice)
 {
     int idx = overlayIndex(sliceId);
-    if (idx >= 0) { m_sliceOverlays[idx].isTxSlice = isTxSlice; update(); }
+    if (idx >= 0) { m_sliceOverlays[idx].isTxSlice = isTxSlice; m_overlayDirty = true; update(); }
 }
 
 void SpectrumWidget::updateSpectrum(const QVector<float>& binsDbm)
@@ -567,7 +570,6 @@ void SpectrumWidget::updateSpectrum(const QVector<float>& binsDbm)
     }
 
 #ifdef HAVE_RHI
-    // Only re-render overlay when content changed (NOT every FFT frame)
     if (m_overlayDirty)
         renderOverlaysToImage();
     m_gpuSpecDirty = true;  // FFT data always updates GPU spectrum vertex buffer
@@ -3120,8 +3122,23 @@ void SpectrumWidget::render(QRhiCommandBuffer* cb)
     if (m_gpuNeedsTexRecreate && m_gpuTexWidth > 0 && m_gpuTexHeight > 0)
         createWaterfallTexture();
 
-    // Overlay QImage is rendered in updateSpectrum() on the main thread,
-    // NOT here in render() — keeps the GPU render loop fast.
+    // Overlay QImage — render if dirty (may be triggered by zoom/pan/tune
+    // events that fire between FFT frames).
+    // Also detect display state changes that bypass our dirty flag setters.
+    {
+        static double lastCenter = 0, lastBw = 0;
+        static float lastRef = 0, lastDyn = 0, lastFrac = 0;
+        if (m_centerMhz != lastCenter || m_bandwidthMhz != lastBw ||
+            m_refLevel != lastRef || m_dynamicRange != lastDyn ||
+            m_spectrumFrac != lastFrac) {
+            m_overlayDirty = true;
+            lastCenter = m_centerMhz; lastBw = m_bandwidthMhz;
+            lastRef = m_refLevel; lastDyn = m_dynamicRange;
+            lastFrac = m_spectrumFrac;
+        }
+    }
+    if (m_overlayDirty)
+        renderOverlaysToImage();
 
     const QColor bgColor(0x0a, 0x0a, 0x14);
 
