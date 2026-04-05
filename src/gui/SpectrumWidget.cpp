@@ -352,6 +352,7 @@ void SpectrumWidget::setFrequencyRange(double centerMhz, double bandwidthMhz)
         }
     }
 #endif
+    m_overlayDirty = true;
     update();
 }
 
@@ -368,6 +369,7 @@ void SpectrumWidget::setDbmRange(float minDbm, float maxDbm)
 {
     m_refLevel     = maxDbm;
     m_dynamicRange = maxDbm - minDbm;
+    m_overlayDirty = true;
     update();
 }
 
@@ -423,6 +425,7 @@ void SpectrumWidget::setSliceOverlay(int sliceId, double freq, int fLow, int fHi
     if (auto* w = m_vfoWidgets.value(sliceId, nullptr))
         w->updatePosition(mhzToX(freq), 0, VfoWidget::Auto);
 #endif
+    m_overlayDirty = true;
     update();
 }
 
@@ -434,6 +437,7 @@ void SpectrumWidget::setSliceOverlayFreq(int sliceId, double freqMhz)
             so.freqMhz = freqMhz;
 #ifdef HAVE_RHI
             if (freqChanged) {
+                m_overlayDirty = true;
                 if (auto* w = m_vfoWidgets.value(sliceId, nullptr))
                     w->updatePosition(mhzToX(freqMhz), 0, VfoWidget::Auto);
             }
@@ -477,6 +481,7 @@ void SpectrumWidget::setVfoFrequency(double freqMhz)
         if (auto* w = m_vfoWidgets.value(o->sliceId, nullptr))
             w->updatePosition(mhzToX(freqMhz), 0, VfoWidget::Auto);
 #endif
+        m_overlayDirty = true;
         update();
     }
 }
@@ -484,7 +489,7 @@ void SpectrumWidget::setVfoFrequency(double freqMhz)
 void SpectrumWidget::setVfoFilter(int lowHz, int highHz)
 {
     auto* o = const_cast<SliceOverlay*>(activeOverlay());
-    if (o) { o->filterLowHz = lowHz; o->filterHighHz = highHz; update(); }
+    if (o) { o->filterLowHz = lowHz; o->filterHighHz = highHz; m_overlayDirty = true; update(); }
 }
 
 void SpectrumWidget::setSliceInfo(int sliceId, bool isTxSlice)
@@ -562,9 +567,10 @@ void SpectrumWidget::updateSpectrum(const QVector<float>& binsDbm)
     }
 
 #ifdef HAVE_RHI
-    // Render overlay QImage on the main thread (outside render() to keep GPU loop fast)
-    renderOverlaysToImage();
-    m_gpuSpecDirty = true;  // new FFT data → update GPU spectrum vertex buffer
+    // Only re-render overlay when content changed (NOT every FFT frame)
+    if (m_overlayDirty)
+        renderOverlaysToImage();
+    m_gpuSpecDirty = true;  // FFT data always updates GPU spectrum vertex buffer
     // VFO positioning is handled by setVfoFrequency() and setFrequencyRange()
     // which are called when the frequency actually changes — not every FFT frame.
 #endif
