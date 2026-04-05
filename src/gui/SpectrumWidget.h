@@ -396,7 +396,7 @@ private:
 
     // Phase 2: GPU spectrum line
     QRhiBuffer* m_gpuSpecVbuf{nullptr};
-    QRhiBuffer* m_gpuSpecUbuf{nullptr};
+
     QRhiGraphicsPipeline* m_gpuSpecLinePipeline{nullptr};
     QRhiGraphicsPipeline* m_gpuSpecFillPipeline{nullptr};
     QRhiShaderResourceBindings* m_gpuSpecSrb{nullptr};

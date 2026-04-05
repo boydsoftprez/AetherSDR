@@ -2871,7 +2871,7 @@ void SpectrumWidget::renderOverlaysToImage()
     }
 
     drawGrid(p, specRect);
-    drawSpectrum(p, specRect);  // fill rendered by QPainter, line skipped (GPU handles it)
+    // drawSpectrum — fully GPU rendered (fragment shader gradient fill + LineStrip line)
     if (m_bandPlanFontSize > 0) drawBandPlan(p, specRect);
     drawDbmScale(p, specRect);
 
@@ -3038,27 +3038,21 @@ void SpectrumWidget::initialize(QRhiCommandBuffer* cb)
     if (m_gpuTexWidth > 0 && m_gpuTexHeight > 0)
         createWaterfallTexture();
 
-    // Phase 2: Spectrum line GPU resources — pre-computed vec2 positions
+    // Phase 2: Spectrum GPU resources — vec2 positions + fragment shader gradient
     m_gpuSpecVbuf = r->newBuffer(QRhiBuffer::Dynamic, QRhiBuffer::VertexBuffer,
-                                  8192 * 2 * sizeof(float));  // max 8192 vec2 vertices
+                                  8192 * 3 * 2 * sizeof(float));  // line + fill verts
     m_gpuSpecVbuf->create();
 
-    m_gpuSpecUbuf = r->newBuffer(QRhiBuffer::Dynamic, QRhiBuffer::UniformBuffer,
-                                  4 * sizeof(float));  // vec4 fillColor
-    m_gpuSpecUbuf->create();
-
+    // No uniform — color passed per-vertex (Metal uniform binding unreliable)
     m_gpuSpecSrb = r->newShaderResourceBindings();
-    m_gpuSpecSrb->setBindings({
-        QRhiShaderResourceBinding::uniformBuffer(0,
-            QRhiShaderResourceBinding::VertexStage | QRhiShaderResourceBinding::FragmentStage,
-            m_gpuSpecUbuf),
-    });
+    m_gpuSpecSrb->setBindings({});
     m_gpuSpecSrb->create();
 
     QRhiVertexInputLayout specLayout;
-    specLayout.setBindings({ { 2 * sizeof(float) } });  // stride = vec2
+    specLayout.setBindings({ { 6 * sizeof(float) } });  // stride = vec2 pos + vec4 color
     specLayout.setAttributes({
-        { 0, 0, QRhiVertexInputAttribute::Float2, 0 },  // position
+        { 0, 0, QRhiVertexInputAttribute::Float2, 0 },                  // position
+        { 0, 1, QRhiVertexInputAttribute::Float4, 2 * sizeof(float) },  // color
     });
 
     QRhiGraphicsPipeline::TargetBlend specBlend;
@@ -3177,26 +3171,48 @@ void SpectrumWidget::render(QRhiCommandBuffer* cb)
 
         const int n = qMin(m_smoothed.size(), 4096);  // halved — fill uses 2x vertices
 
-        // Build line vertices (n × vec2) followed by fill vertices (2n × vec2)
-        // Fill is a TriangleStrip: for each bin, (specPoint, bottomPoint)
-        QVector<float> verts(n * 2 + n * 4);  // line: n*2, fill: n*2*2
-        float* lineData = verts.data();
-        float* fillData = verts.data() + n * 2;
+        // Per-vertex color: position (vec2) + color (vec4) = 6 floats per vertex
+        // Layout: [line verts: n×6] [fill verts: 2n×6]
+        const float r_ = static_cast<float>(m_fftFillColor.redF());
+        const float g_ = static_cast<float>(m_fftFillColor.greenF());
+        const float b_ = static_cast<float>(m_fftFillColor.blueF());
+        const QColor dk = m_fftFillColor.darker(300);
+        const float dr = static_cast<float>(dk.redF());
+        const float dg = static_cast<float>(dk.greenF());
+        const float db = static_cast<float>(dk.blueF());
+        const float topAlpha = (200.0f / 255.0f) * m_fftFillAlpha;
+        const float botAlpha = (60.0f / 255.0f) * m_fftFillAlpha;
+
+        const int lineFloats = n * 6;
+        const int fillFloats = n * 2 * 6;
+        QVector<float> verts(lineFloats + fillFloats);
+        float* line = verts.data();
+        float* fill = verts.data() + lineFloats;
 
         for (int i = 0; i < n; ++i) {
             const float norm = qBound(0.0f, (m_refLevel - m_smoothed[i]) / m_dynamicRange, 1.0f);
             const float x = -1.0f + 2.0f * static_cast<float>(i) / n;
             const float y = specTopNDC_ + (specBotNDC_ - specTopNDC_) * norm;
 
-            // Line vertex
-            lineData[i * 2] = x;
-            lineData[i * 2 + 1] = y;
+            // Line: pos + fully opaque fill color
+            line[i*6+0] = x;  line[i*6+1] = y;
+            line[i*6+2] = r_; line[i*6+3] = g_; line[i*6+4] = b_; line[i*6+5] = 1.0f;
 
-            // Fill: two vertices per bin — spectrum point then bottom point
-            fillData[i * 4] = x;
-            fillData[i * 4 + 1] = y;
-            fillData[i * 4 + 2] = x;
-            fillData[i * 4 + 3] = specBotNDC_;
+            // Fill: compute color from Y position (uniform vertical gradient)
+            // This ensures same-Y pixels get same color regardless of triangle
+            const int fi = i * 12;
+            const float range = specTopNDC_ - specBotNDC_;
+            auto yColor = [&](float vy, float* out) {
+                const float t = (range > 0) ? qBound(0.0f, (specTopNDC_ - vy) / range, 1.0f) : 0.0f;
+                out[0] = r_ + t * (dr - r_);
+                out[1] = g_ + t * (dg - g_);
+                out[2] = b_ + t * (db - b_);
+                out[3] = topAlpha + t * (botAlpha - topAlpha);
+            };
+            fill[fi+0] = x;  fill[fi+1] = y;
+            yColor(y, &fill[fi+2]);
+            fill[fi+6] = x;  fill[fi+7] = specBotNDC_;
+            yColor(specBotNDC_, &fill[fi+8]);
         }
         u->updateDynamicBuffer(m_gpuSpecVbuf, 0, verts.size() * sizeof(float), verts.constData());
         m_gpuSpecBinCount = n;
@@ -3301,6 +3317,8 @@ void SpectrumWidget::render(QRhiCommandBuffer* cb)
     };
     u->updateDynamicBuffer(m_gpuUbuf, 0, sizeof(uniforms), uniforms);
 
+    // Spectrum color/alpha is per-vertex — no uniform needed
+
     // Always clear to black and submit resource updates — prevents pink flash
     const QSize outSz = renderTarget()->pixelSize();
     cb->beginPass(renderTarget(), bgColor, {1.0f, 0}, u);
@@ -3337,18 +3355,18 @@ void SpectrumWidget::render(QRhiCommandBuffer* cb)
         cb->draw(4);
     }
 
-    // GPU spectrum LINE only — fill is rendered by QPainter in the overlay
-    if (m_gpuSpecLinePipeline && m_gpuSpecBinCount > 0) {
-        float lineColor[4] = {
-            static_cast<float>(m_fftFillColor.redF()),
-            static_cast<float>(m_fftFillColor.greenF()),
-            static_cast<float>(m_fftFillColor.blueF()),
-            1.0f,
-        };
-        QRhiResourceUpdateBatch* uLine = r->nextResourceUpdateBatch();
-        uLine->updateDynamicBuffer(m_gpuSpecUbuf, 0, sizeof(lineColor), lineColor);
-        cb->resourceUpdate(uLine);
+    // GPU spectrum fill + line (per-vertex color, no uniform needed)
+    if (m_gpuSpecFillPipeline && m_gpuSpecLinePipeline && m_gpuSpecBinCount > 0) {
+        const quint32 lineBytes = m_gpuSpecBinCount * 6 * sizeof(float);
 
+        // Fill (TriangleStrip, per-vertex gradient)
+        cb->setGraphicsPipeline(m_gpuSpecFillPipeline);
+        cb->setShaderResources(m_gpuSpecSrb);
+        const QRhiCommandBuffer::VertexInput fillBinding(m_gpuSpecVbuf, lineBytes);
+        cb->setVertexInput(0, 1, &fillBinding);
+        cb->draw(m_gpuSpecBinCount * 2);
+
+        // Line (LineStrip, per-vertex solid color)
         cb->setGraphicsPipeline(m_gpuSpecLinePipeline);
         cb->setShaderResources(m_gpuSpecSrb);
         const QRhiCommandBuffer::VertexInput lineBinding(m_gpuSpecVbuf, 0);
@@ -3364,7 +3382,7 @@ void SpectrumWidget::releaseResources()
     delete m_gpuSpecFillPipeline; m_gpuSpecFillPipeline = nullptr;
     delete m_gpuSpecLinePipeline; m_gpuSpecLinePipeline = nullptr;
     delete m_gpuSpecSrb; m_gpuSpecSrb = nullptr;
-    delete m_gpuSpecUbuf; m_gpuSpecUbuf = nullptr;
+
     delete m_gpuSpecVbuf; m_gpuSpecVbuf = nullptr;
     delete m_gpuOverlayPipeline; m_gpuOverlayPipeline = nullptr;
     delete m_gpuOverlaySrb; m_gpuOverlaySrb = nullptr;

@@ -408,12 +408,49 @@ extra repaints. Acceptable tradeoff for correct VFO behavior.
 - Mouse events: click-to-tune, scroll-to-tune need testing
 - Multi-pan: untested
 
+---
+
+## Measurement 7: GPU spectrum fill + line (per-vertex gradient)
+
+**Date:** 2026-04-04
+
+Moved both the spectrum line AND fill to GPU rendering. The fill uses a
+TriangleStrip with per-vertex colors computed from Y position on the CPU,
+replicating QPainter's QLinearGradient behavior.
+
+### Key findings
+
+**Metal uniform buffers broken for spectrum pipeline:**
+Uniform buffer data never reached the fragment shader despite correct
+std140 layout, SRB binding, and buffer updates. Hardcoded shader colors
+worked, per-vertex colors worked, but uniforms did not. Both fragment-only
+and vertex+fragment uniform declarations were tried. Root cause unknown —
+possibly a QRhi Metal backend bug with uniform-only (no texture) pipelines.
+
+**Per-vertex Y-based gradient eliminates streaks:**
+Earlier per-vertex approach had "top color / bottom color" per vertex which
+created per-triangle interpolation artifacts (vertical stripes). Fix: compute
+each vertex's color from its Y position relative to specTop/specBot on the
+CPU. This gives every pixel at the same Y the same color regardless of
+which triangle it belongs to.
+
+### Results
+
+| Metric | Value |
+|--------|-------|
+| CPU % | ~47-53% |
+| Fill | Smooth gradient, no streaks |
+| Fill opacity slider | Working |
+| Fill color picker | Working |
+| Line | Working (GPU LineStrip) |
+| drawSpectrum in overlay | Removed (GPU handles fill + line) |
+
 ## Measurements To Take Next
-- [x] SpectrumWidget-as-QRhiWidget: ~17-53% CPU (confirmed, varies by overlay load)
+- [x] SpectrumWidget-as-QRhiWidget: ~17-53% CPU (confirmed)
 - [x] After waterfall fix: smooth scrolling at 47-50 FPS
 - [x] After Retina DPR fix: text sharp at 2x device pixel ratio
 - [x] After VFO fix: correct positioning on launch and tune
-- [ ] Phase 2: spectrum GPU vertex buffer CPU impact
+- [x] Phase 2: spectrum GPU fill + line: ~47-53% CPU
 - [ ] Phase 3: geometric overlays GPU CPU impact
 - [ ] Phase 4: cached text overlay CPU impact
 - [ ] Linux (OpenGL): verify GPU path helps where CG doesn't
