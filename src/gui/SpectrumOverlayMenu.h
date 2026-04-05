@@ -8,6 +8,7 @@
 
 class QPushButton;
 class QComboBox;
+class QScrollArea;
 class QSlider;
 class QLabel;
 
@@ -123,6 +124,8 @@ private:
 
     QPushButton* m_toggleBtn{nullptr};
     QVector<QPushButton*> m_menuBtns;
+    QScrollArea* m_scrollArea{nullptr};
+    QWidget* m_btnContainer{nullptr};
     bool m_expanded{true};
 
     // Band sub-panel (shown to the right of the menu)

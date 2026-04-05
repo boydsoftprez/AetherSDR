@@ -9,6 +9,7 @@
 #include <QSlider>
 #include <QLabel>
 #include <QGridLayout>
+#include <QScrollArea>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QSignalBlocker>
@@ -135,6 +136,29 @@ SpectrumOverlayMenu::SpectrumOverlayMenu(QWidget* parent)
             connect(btn, &QPushButton::clicked, this, def.sig);
         m_menuBtns.append(btn);
     }
+
+    // Wrap menu buttons in a scroll area for multi-pan layouts where
+    // the spectrum height is smaller than the button column.
+    m_btnContainer = new QWidget;
+    m_btnContainer->setStyleSheet("background: transparent;");
+    auto* vlay = new QVBoxLayout(m_btnContainer);
+    vlay->setContentsMargins(2, 0, 2, 0);
+    vlay->setSpacing(2);
+    for (auto* btn : m_menuBtns)
+        vlay->addWidget(btn);
+    vlay->addStretch();
+
+    m_scrollArea = new QScrollArea(this);
+    m_scrollArea->setWidget(m_btnContainer);
+    m_scrollArea->setWidgetResizable(true);
+    m_scrollArea->setFrameShape(QFrame::NoFrame);
+    m_scrollArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    m_scrollArea->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    m_scrollArea->setStyleSheet(
+        "QScrollArea { background: transparent; border: none; }"
+        "QScrollBar:vertical { width: 4px; background: transparent; }"
+        "QScrollBar::handle:vertical { background: rgba(255,255,255,60); border-radius: 2px; }"
+        "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }");
 
     buildBandPanel();
     buildAntPanel();
@@ -758,18 +782,23 @@ void SpectrumOverlayMenu::updateLayout()
     m_toggleBtn->setText(m_expanded ? QStringLiteral("\u2190") : QStringLiteral("\u2192"));
     m_toggleBtn->move(pad, pad);
 
-    int y = pad + BTN_H + gap;
-    for (auto* btn : m_menuBtns) {
-        btn->setVisible(m_expanded);
+    if (m_scrollArea) {
+        m_scrollArea->setVisible(m_expanded);
         if (m_expanded) {
-            btn->move(pad, y);
-            y += BTN_H + gap;
+            int y = pad + BTN_H + gap;
+            int maxH = parentWidget() ? parentWidget()->height() : 600;
+            int btnTotalH = static_cast<int>(m_menuBtns.size()) * (BTN_H + gap);
+            int scrollH = qMin(maxH - y - pad, btnTotalH);
+            scrollH = qMax(scrollH, BTN_H);  // at least one button visible
+
+            m_scrollArea->setGeometry(0, y, pad + BTN_W + pad, scrollH);
+
+            int totalH = y + scrollH + pad;
+            setFixedSize(pad + BTN_W + pad, totalH);
+        } else {
+            setFixedSize(pad + BTN_W + pad, pad + BTN_H + pad);
         }
     }
-
-    int totalH = m_expanded ? (pad + BTN_H + gap + m_menuBtns.size() * (BTN_H + gap))
-                            : (pad + BTN_H + pad);
-    setFixedSize(pad + BTN_W + pad, totalH);
 }
 
 // ── Display sub-panel ─────────────────────────────────────────────────────────
