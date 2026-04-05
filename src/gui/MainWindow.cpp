@@ -48,6 +48,8 @@
 #include "core/MidiSettings.h"
 #include "MidiMappingDialog.h"
 #endif
+#include "AetherDspDialog.h"
+#include "DspParamPopup.h"
 
 #include <memory>
 #include <functional>
@@ -2900,6 +2902,29 @@ void MainWindow::buildMenuBar()
         });
     }
 
+    auto* dspAction = settingsMenu->addAction("AetherDSP Settings...");
+    connect(dspAction, &QAction::triggered, this, [this] {
+        if (m_dspDialog) {
+            m_dspDialog->raise();
+            m_dspDialog->activateWindow();
+            return;
+        }
+        auto* dlg = new AetherDspDialog(m_audio, this);
+        dlg->setAttribute(Qt::WA_DeleteOnClose);
+        // Wire NR2 parameter signals to AudioEngine (audio thread safe)
+        connect(dlg, &AetherDspDialog::nr2GainMaxChanged, this, [this](float v) {
+            QMetaObject::invokeMethod(m_audio, [this, v]() { m_audio->setNr2GainMax(v); });
+        });
+        connect(dlg, &AetherDspDialog::nr2GainSmoothChanged, this, [this](float v) {
+            QMetaObject::invokeMethod(m_audio, [this, v]() { m_audio->setNr2GainSmooth(v); });
+        });
+        connect(dlg, &AetherDspDialog::nr2QsppChanged, this, [this](float v) {
+            QMetaObject::invokeMethod(m_audio, [this, v]() { m_audio->setNr2Qspp(v); });
+        });
+        m_dspDialog = dlg;
+        dlg->show();
+    });
+
     settingsMenu->addSeparator();
 
     auto* autoRigctlAction = settingsMenu->addAction("Autostart rigctld with AetherSDR");
@@ -5300,6 +5325,8 @@ void MainWindow::wirePanadapter(PanadapterApplet* applet)
         }
         // VFO button sync happens via AudioEngine::nr2EnabledChanged signal
     });
+    connect(menu, &SpectrumOverlayMenu::nr2RightClicked,
+            this, [this](const QPoint& pos) { showNr2ParamPopup(pos); });
     connect(menu, &SpectrumOverlayMenu::rn2Toggled,
             this, [this](bool on) {
         if (on) {
@@ -5414,6 +5441,8 @@ void MainWindow::wireVfoWidget(VfoWidget* w, SliceModel* s)
         if (!on) { QMetaObject::invokeMethod(m_audio, [this]() { m_audio->setNr2Enabled(false); }); return; }
         enableNr2WithWisdom();
     });
+    connect(w, &VfoWidget::nr2RightClicked,
+            this, [this](const QPoint& pos) { showNr2ParamPopup(pos); });
 
     // RN2 toggle
     connect(w, &VfoWidget::rn2Toggled, this, [this](bool on) {
@@ -5885,6 +5914,66 @@ void MainWindow::registerShortcutActions()
     m_shortcutManager.loadBindings();
     s_keyboardShortcutsEnabled = m_keyboardShortcutsEnabled;
     m_shortcutManager.rebuildShortcuts(this, shortcutGuard);
+}
+
+void MainWindow::showNr2ParamPopup(const QPoint& globalPos)
+{
+    auto& s = AppSettings::instance();
+    auto* popup = new DspParamPopup(this);
+
+    popup->addRadioGroup("Gain:", {"Lin", "Log", "Gam"},
+        s.value("NR2GainMethod", "2").toInt(),
+        [this](int id) {
+            auto& s = AppSettings::instance();
+            s.setValue("NR2GainMethod", QString::number(id));
+            s.save();
+        });
+
+    popup->addSlider("Smoothing",  50, 98,
+        static_cast<int>(s.value("NR2GainSmooth", "0.85").toFloat() * 100),
+        [](int v) { return QString::number(v / 100.0f, 'f', 2); },
+        [this](int v) {
+            float val = v / 100.0f;
+            auto& s = AppSettings::instance();
+            s.setValue("NR2GainSmooth", QString::number(val, 'f', 2));
+            s.save();
+            QMetaObject::invokeMethod(m_audio, [this, val]() { m_audio->setNr2GainSmooth(val); });
+        });
+
+    popup->addCheckbox("AE Filter",
+        s.value("NR2AeFilter", "True").toString() == "True",
+        [](bool on) {
+            auto& s = AppSettings::instance();
+            s.setValue("NR2AeFilter", on ? "True" : "False");
+            s.save();
+        });
+
+    popup->finalize(
+        [this]() {
+            // Open AetherDSP Settings dialog
+            if (m_dspDialog) {
+                m_dspDialog->raise();
+                m_dspDialog->activateWindow();
+                return;
+            }
+            auto* dlg = new AetherDspDialog(m_audio, this);
+            dlg->setAttribute(Qt::WA_DeleteOnClose);
+            connect(dlg, &AetherDspDialog::nr2GainMaxChanged, this, [this](float v) {
+                QMetaObject::invokeMethod(m_audio, [this, v]() { m_audio->setNr2GainMax(v); });
+            });
+            connect(dlg, &AetherDspDialog::nr2GainSmoothChanged, this, [this](float v) {
+                QMetaObject::invokeMethod(m_audio, [this, v]() { m_audio->setNr2GainSmooth(v); });
+            });
+            connect(dlg, &AetherDspDialog::nr2QsppChanged, this, [this](float v) {
+                QMetaObject::invokeMethod(m_audio, [this, v]() { m_audio->setNr2Qspp(v); });
+            });
+            m_dspDialog = dlg;
+            dlg->show();
+        },
+        nullptr  // Reset handled by individual control resetters
+    );
+
+    popup->showAt(globalPos);
 }
 
 void MainWindow::applyPanLayout(const QString& layoutId)

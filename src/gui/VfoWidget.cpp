@@ -1168,6 +1168,10 @@ void VfoWidget::buildTabContent()
 
         connect(m_nrBtn,   &QPushButton::toggled, this, [this](bool on) { if (!m_updatingFromModel && m_slice) m_slice->setNr(on); });
         connect(m_nr2Btn,  &QPushButton::toggled, this, [this](bool on) { if (!m_updatingFromModel) emit nr2Toggled(on); });
+        m_nr2Btn->setContextMenuPolicy(Qt::CustomContextMenu);
+        connect(m_nr2Btn, &QPushButton::customContextMenuRequested, this, [this](const QPoint& pos) {
+            emit nr2RightClicked(m_nr2Btn->mapToGlobal(pos));
+        });
         connect(m_nbBtn,   &QPushButton::toggled, this, [this](bool on) { if (!m_updatingFromModel && m_slice) m_slice->setNb(on); });
         connect(m_anfBtn,  &QPushButton::toggled, this, [this](bool on) { if (!m_updatingFromModel && m_slice) m_slice->setAnf(on); });
         connect(m_nrlBtn,  &QPushButton::toggled, this, [this](bool on) { if (!m_updatingFromModel && m_slice) m_slice->setNrl(on); });

@@ -347,7 +347,10 @@ void SpectralNR::processFrame()
     // Temporal gain smoothing — prevents rapid per-bin fluctuations
     // that cause "musical noise" clicks and glitches.
     for (int k = 0; k < m_msize; ++k)
-        m_smoothMask[k] = GainSmooth * m_smoothMask[k] + (1.0 - GainSmooth) * m_mask[k];
+    {
+        const double gs = m_gainSmooth.load();
+        m_smoothMask[k] = gs * m_smoothMask[k] + (1.0 - gs) * m_mask[k];
+    }
 
     // Startup ramp: crossfade from dry (gain=1) to processed over ~1 second
     // to avoid transients while the noise estimator converges.
@@ -534,13 +537,15 @@ void SpectralNR::computeGain()
         {
             double v2 = std::min(v, 700.0);
             double eta = gain * gain * m_lambdaY[k] / lambdaD;
-            double eps = eta / (1.0 - Q_SPP);
-            double witchHat = (1.0 - Q_SPP) / Q_SPP * std::exp(v2) / (1.0 + eps);
+            const double qspp = m_qSpp.load();
+            double eps = eta / (1.0 - qspp);
+            double witchHat = (1.0 - qspp) / qspp * std::exp(v2) / (1.0 + eps);
             gain *= witchHat / (1.0 + witchHat);
         }
 
         // Clamp and NaN guard
-        if (gain > GainMax) gain = GainMax;
+        const double gmax = m_gainMax.load();
+        if (gain > gmax) gain = gmax;
         if (gain != gain) gain = 0.01;  // NaN
 
         m_mask[k] = gain;

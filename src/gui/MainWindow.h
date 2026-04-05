@@ -116,6 +116,7 @@ private:
     void registerShortcutActions();
     void toggleMinimalMode(bool on);
     void updateKeyerAvailability(const QString& mode);
+    void showNr2ParamPopup(const QPoint& globalPos);
     void applyPanLayout(const QString& layoutId);
     void createPansSequentially(const QString& layoutId, int total,
                                 std::shared_ptr<QStringList> panIds, int created);
@@ -216,6 +217,7 @@ private:
     QPointer<QDialog> m_radioSetupDialog;
     QPointer<QDialog> m_memoryDialog;
     QPointer<WhatsNewDialog> m_whatsNewDialog;
+    QPointer<QDialog> m_dspDialog;
 #ifdef HAVE_MIDI
     QPointer<QDialog> m_midiDialog;
 #endif

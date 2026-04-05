@@ -104,6 +104,10 @@ public:
     // Q_INVOKABLE: called from main thread, runs on audio worker thread (#502)
     Q_INVOKABLE void setNr2Enabled(bool on);
     bool nr2Enabled() const { return m_nr2Enabled.load(); }
+    // NR2 user-adjustable parameters (thread-safe via atomic in SpectralNR)
+    void setNr2GainMax(float v);
+    void setNr2Qspp(float v);
+    void setNr2GainSmooth(float v);
 
     // Client-side RN2 (RNNoise neural noise suppression)
     Q_INVOKABLE void setRn2Enabled(bool on);

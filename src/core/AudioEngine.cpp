@@ -243,6 +243,11 @@ void AudioEngine::setNr2Enabled(bool on)
             emit nr2EnabledChanged(false);
             return;
         }
+        // Restore user-adjusted parameters from AppSettings
+        auto& s = AppSettings::instance();
+        m_nr2->setGainMax(s.value("NR2GainMax", "1.50").toFloat());
+        m_nr2->setGainSmooth(s.value("NR2GainSmooth", "0.85").toFloat());
+        m_nr2->setQspp(s.value("NR2Qspp", "0.20").toFloat());
         m_nr2Enabled = true;
     } else {
         m_nr2Enabled = false;
@@ -251,6 +256,10 @@ void AudioEngine::setNr2Enabled(bool on)
     qCDebug(lcAudio) << "AudioEngine: NR2" << (on ? "enabled" : "disabled");
     emit nr2EnabledChanged(on);
 }
+
+void AudioEngine::setNr2GainMax(float v)    { if (m_nr2) m_nr2->setGainMax(v); }
+void AudioEngine::setNr2Qspp(float v)      { if (m_nr2) m_nr2->setQspp(v); }
+void AudioEngine::setNr2GainSmooth(float v) { if (m_nr2) m_nr2->setGainSmooth(v); }
 
 void AudioEngine::setRn2Enabled(bool on)
 {

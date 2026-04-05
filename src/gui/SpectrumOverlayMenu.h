@@ -71,6 +71,7 @@ signals:
     void rn2Toggled(bool on);
     void bnrToggled(bool on);
     void bnrIntensityChanged(float ratio);
+    void nr2RightClicked(const QPoint& globalPos);
     // Display sub-panel signals
     void fftAverageChanged(int frames);
     void fftFpsChanged(int fps);

@@ -74,6 +74,7 @@ Q_SIGNALS:
     void closeSliceRequested();
     void lockToggled(bool locked);
     void nr2Toggled(bool on);
+    void nr2RightClicked(const QPoint& globalPos);
     void rn2Toggled(bool on);
     void bnrToggled(bool on);
 #ifdef HAVE_RADE

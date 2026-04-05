@@ -37,6 +37,14 @@ public:
     // Reset all internal state (call when toggling on or stream restarts).
     void reset();
 
+    // User-adjustable parameters (thread-safe, called from main thread)
+    void setGainMax(float v)    { m_gainMax.store(v); }
+    void setQspp(float v)      { m_qSpp.store(v); }
+    void setGainSmooth(float v) { m_gainSmooth.store(v); }
+    float gainMax() const       { return m_gainMax.load(); }
+    float qspp() const         { return m_qSpp.load(); }
+    float gainSmooth() const    { return m_gainSmooth.load(); }
+
     int fftSize() const { return m_fftSize; }
 #ifdef HAVE_FFTW3
     bool hasPlanFailed() const { return m_planFailed; }
@@ -137,19 +145,21 @@ private:
     int m_frameCount{0};                // frames processed since reset
     static constexpr int RampFrames = 187; // ~1 second at 24kHz/128hop
 
-    // ── Algorithm constants ────────────────────────────────────────────
+    // ── Algorithm constants (fixed) ─────────────────────────────────────
     static constexpr double Alpha      = 0.98;    // decision-directed smoothing
     static constexpr double GammaMax   = 1e4;     // 40 dB cap on a-posteriori SNR
     static constexpr double XiMin      = 1e-4;    // a-priori SNR floor
     static constexpr double EpsFloor   = 1e-300;  // match WDSP eps_floor
-    static constexpr double GainMax    = 1.5;       // cap gain — noise REDUCTION, not amplification
-    static constexpr double Q_SPP      = 0.2;     // speech presence probability prior
-    static constexpr double GainSmooth  = 0.85;    // temporal gain smoothing (anti-musical-noise)
     static constexpr double AlphaMax   = 0.96;    // OSMS max smoothing
     static constexpr double AlphaCMin  = 0.7;
     static constexpr double BetaMax    = 0.8;
     static constexpr double InvQeqMax  = 0.5;
     static constexpr double SnrqExp    = -0.25;
+
+    // ── User-adjustable parameters (atomic for audio thread safety) ───
+    std::atomic<double> m_gainMax{1.5};     // cap gain — noise REDUCTION, not amplification
+    std::atomic<double> m_qSpp{0.2};        // speech presence probability prior
+    std::atomic<double> m_gainSmooth{0.85}; // temporal gain smoothing (anti-musical-noise)
 
     // ── Internal methods ───────────────────────────────────────────────
     void initWindow();

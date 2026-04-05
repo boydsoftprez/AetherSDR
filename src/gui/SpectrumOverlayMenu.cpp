@@ -1,4 +1,5 @@
 #include "SpectrumOverlayMenu.h"
+#include "DspParamPopup.h"
 #include "GuardedSlider.h"
 #include "ComboStyle.h"
 #include "models/SliceModel.h"
@@ -432,6 +433,12 @@ void SpectrumOverlayMenu::setSlice(SliceModel* slice)
     connect(m_dspRows[2].btn, &QPushButton::toggled, this, [this](bool on) {
         if (!m_updatingFromModel)
             emit nr2Toggled(on);
+    });
+    // NR2 right-click → parameter popup
+    m_dspRows[2].btn->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_dspRows[2].btn, &QPushButton::customContextMenuRequested,
+            this, [this](const QPoint& pos) {
+        emit nr2RightClicked(m_dspRows[2].btn->mapToGlobal(pos));
     });
 
     // RN2 (client-side, index 7) — emit signal for MainWindow to handle
