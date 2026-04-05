@@ -137,6 +137,17 @@ SpectrumOverlayMenu::SpectrumOverlayMenu(QWidget* parent)
         m_menuBtns.append(btn);
     }
 
+    // Menu button tooltips
+    if (m_menuBtns.size() >= 7) {
+        m_menuBtns[0]->setToolTip("Add a new receive slice on this panadapter.");
+        m_menuBtns[1]->setToolTip("Add a tracking notch filter at the current frequency.");
+        m_menuBtns[2]->setToolTip("Open band selector.");
+        m_menuBtns[3]->setToolTip("Open antenna and RF gain controls.");
+        m_menuBtns[4]->setToolTip("Open DSP noise reduction and filter controls.");
+        m_menuBtns[5]->setToolTip("Open panadapter and waterfall display settings.");
+        m_menuBtns[6]->setToolTip("Open DAX audio routing channel selector.");
+    }
+
     buildBandPanel();
     buildAntPanel();
     buildDspPanel();
@@ -323,6 +334,12 @@ void SpectrumOverlayMenu::buildAntPanel()
         m_wnbLabel->setText(QString::number(v));
         emit wnbLevelChanged(v);
     });
+
+    // ANT panel tooltips
+    m_rxAntCmb->setToolTip("Select the receive antenna port for this slice.");
+    m_rfGainSlider->setToolTip("Adjusts receiver IF gain. Lower values reduce strong-signal overload.");
+    m_wnbBtn->setToolTip("Wideband noise blanker \u2014 suppresses correlated impulse noise across the full panadapter bandwidth.");
+    m_wnbSlider->setToolTip("Adjusts WNB threshold. Higher values blank more aggressively.");
 
     m_antPanel->setFixedWidth(180);
     m_antPanel->adjustSize();
@@ -584,6 +601,31 @@ void SpectrumOverlayMenu::buildDspPanel()
         vbox->addLayout(row);
         m_dspRows.append(dspRow);
     }
+
+    // DSP button tooltips
+    m_dspRows[0].btn->setToolTip("Noise blanker \u2014 detects and removes fast impulse noise from sparks and switching sources.");
+    m_dspRows[1].btn->setToolTip("Radio-side noise reduction \u2014 attenuates uncorrelated background noise.");
+    m_dspRows[2].btn->setToolTip("Client-side spectral noise reduction (Ephraim-Malah MMSE). Right-click for NR2 settings.");
+    m_dspRows[3].btn->setToolTip("Auto notch filter \u2014 detects and cancels persistent unwanted tones.");
+    m_dspRows[4].btn->setToolTip("Leaky LMS adaptive filter \u2014 preserves correlated signals while removing uncorrelated noise. Best for daily SSB/CW.");
+    m_dspRows[5].btn->setToolTip("Spectral subtraction with voice activity detection \u2014 cuts noise most aggressively between words.");
+    m_dspRows[6].btn->setToolTip("Deep-learning recurrent neural network \u2014 separates speech from complex noise. Best at low SNR.");
+    m_dspRows[7].btn->setToolTip("Client-side RNNoise neural noise suppression. Effective for broadband noise on voice modes.");
+    m_dspRows[8].btn->setToolTip("Spectral subtraction filter \u2014 computes speech/noise probability per frequency bin to remove steady noise.");
+    m_dspRows[9].btn->setToolTip("Leaky LMS notch filter \u2014 removes steady tones such as power-line hum or carriers.");
+    m_dspRows[10].btn->setToolTip("FFT-based notch filter \u2014 removes up to five persistent tones from transformers or power supplies.");
+    m_dspRows[11].btn->setToolTip("NVIDIA GPU-accelerated neural audio denoising. Requires NVIDIA RTX 4000+ with Docker.");
+    m_dspRows[12].btn->setToolTip("Client-side spectral bleach noise reduction (libspecbleach). Right-click for NR4 settings.");
+
+    // DSP slider tooltips
+    if (m_dspRows[0].slider) m_dspRows[0].slider->setToolTip("Adjusts blanking depth. Higher values suppress more impulse noise but may clip desired signals.");
+    if (m_dspRows[1].slider) m_dspRows[1].slider->setToolTip("Adjusts noise reduction depth. Higher values remove more noise but may affect signal clarity.");
+    if (m_dspRows[3].slider) m_dspRows[3].slider->setToolTip("Adjusts notch depth. Higher values attenuate tones more aggressively.");
+    if (m_dspRows[4].slider) m_dspRows[4].slider->setToolTip("Adjusts NRL filter strength.");
+    if (m_dspRows[5].slider) m_dspRows[5].slider->setToolTip("Adjusts NRS suppression depth.");
+    if (m_dspRows[8].slider) m_dspRows[8].slider->setToolTip("Adjusts NRF filter strength.");
+    if (m_dspRows[9].slider) m_dspRows[9].slider->setToolTip("Adjusts ANFL notch depth.");
+    if (m_dspRows[11].slider) m_dspRows[11].slider->setToolTip("Adjusts BNR denoising intensity.");
 
     m_dspPanel->setFixedWidth(200);
     m_dspPanel->adjustSize();
@@ -1092,6 +1134,22 @@ void SpectrumOverlayMenu::buildDisplayPanel()
         });
         ++row;
     }
+
+    // Display panel tooltips
+    m_avgSlider->setToolTip("FFT frame averaging. Higher values smooth the spectrum trace but reduce time resolution.");
+    m_fpsSlider->setToolTip("FFT refresh rate in frames per second.");
+    m_fillSlider->setToolTip("Opacity of the spectrum fill area below the trace.");
+    if (m_heatMapBtn) m_heatMapBtn->setToolTip("Colors the spectrum trace by signal strength instead of a single color.");
+    if (m_weightedAvgBtn) m_weightedAvgBtn->setToolTip("Weights recent FFT frames more heavily for faster response to signal changes.");
+    m_gainSlider->setToolTip("Waterfall color gain. Higher values brighten weak signals.");
+    m_blackSlider->setToolTip("Waterfall black level. Increase to darken the noise floor.");
+    if (m_autoBlackBtn) m_autoBlackBtn->setToolTip("Automatically adjusts the waterfall black level to match the current noise floor.");
+    m_rateSlider->setToolTip("Waterfall line duration. Lower values scroll faster.");
+    if (m_wfBlankerThreshSlider) m_wfBlankerThreshSlider->setToolTip("Waterfall noise blanking threshold. Higher values blank more aggressively.");
+    if (m_cursorFreqBtn) m_cursorFreqBtn->setToolTip("Shows the frequency at the mouse cursor position on the panadapter.");
+    if (m_bgOpacitySlider) m_bgOpacitySlider->setToolTip("Opacity of the background image overlay.");
+    if (m_floorEnableBtn) m_floorEnableBtn->setToolTip("Shows a noise floor reference line on the spectrum display.");
+    if (m_floorSlider) m_floorSlider->setToolTip("Vertical position of the noise floor reference line.");
 
     m_displayPanel->adjustSize();
 }

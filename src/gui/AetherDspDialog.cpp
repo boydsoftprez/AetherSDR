@@ -85,6 +85,10 @@ void AetherDspDialog::buildNr2Tab(QTabWidget* tabs)
         m_nr2GainGroup->addButton(rb, i);
         gainLayout->addWidget(rb);
     }
+    m_nr2GainGroup->button(0)->setToolTip("Linear audio amplitude scale for gain computation.");
+    m_nr2GainGroup->button(1)->setToolTip("Logarithmic amplitude scale \u2014 compresses dynamic range.");
+    m_nr2GainGroup->button(2)->setToolTip("Gamma distribution model matching typical speech amplitude patterns.");
+    m_nr2GainGroup->button(3)->setToolTip("Noise reduction model trained on real speech and noise samples.");
     m_nr2GainGroup->button(2)->setChecked(true);  // Gamma default
     connect(m_nr2GainGroup, &QButtonGroup::idClicked, this, [this](int id) {
         auto& s = AppSettings::instance();
@@ -104,6 +108,9 @@ void AetherDspDialog::buildNr2Tab(QTabWidget* tabs)
         m_nr2NpeGroup->addButton(rb, i);
         npeLayout->addWidget(rb);
     }
+    m_nr2NpeGroup->button(0)->setToolTip("Optimal Smoothing Minimum Statistics \u2014 tracks noise floor using a running minimum estimate.");
+    m_nr2NpeGroup->button(1)->setToolTip("Minimum Mean Squared Error \u2014 minimizes the expected noise estimation error.");
+    m_nr2NpeGroup->button(2)->setToolTip("Non-Stationary estimation \u2014 adapts to noise that changes over time.");
     m_nr2NpeGroup->button(0)->setChecked(true);  // OSMS default
     connect(m_nr2NpeGroup, &QButtonGroup::idClicked, this, [this](int id) {
         auto& s = AppSettings::instance();
@@ -115,6 +122,7 @@ void AetherDspDialog::buildNr2Tab(QTabWidget* tabs)
 
     // AE Filter
     m_nr2AeCheck = new QCheckBox("AE Filter (artifact elimination)");
+    m_nr2AeCheck->setToolTip("Reduces ringing and musical artifacts typical of frequency-domain noise reduction.");
     m_nr2AeCheck->setChecked(true);
     connect(m_nr2AeCheck, &QCheckBox::toggled, this, [this](bool on) {
         auto& s = AppSettings::instance();
@@ -137,6 +145,7 @@ void AetherDspDialog::buildNr2Tab(QTabWidget* tabs)
         m_nr2GainMaxSlider->setRange(50, 200);  // 0.50–2.00
         m_nr2GainMaxSlider->setValue(150);       // default 1.50
         m_nr2GainMaxSlider->setStyleSheet(kSliderStyle);
+        m_nr2GainMaxSlider->setToolTip("Maximum noise reduction depth. Higher values suppress more noise but risk distorting speech.");
         sliderGrid->addWidget(m_nr2GainMaxSlider, row, 1);
         m_nr2GainMaxLabel = new QLabel("1.50");
         m_nr2GainMaxLabel->setStyleSheet(valStyle);
@@ -162,6 +171,7 @@ void AetherDspDialog::buildNr2Tab(QTabWidget* tabs)
         m_nr2SmoothSlider->setRange(50, 98);  // 0.50–0.98
         m_nr2SmoothSlider->setValue(85);       // default 0.85
         m_nr2SmoothSlider->setStyleSheet(kSliderStyle);
+        m_nr2SmoothSlider->setToolTip("How smoothly the noise estimate tracks changes. Higher values give steadier but slower adaptation.");
         sliderGrid->addWidget(m_nr2SmoothSlider, row, 1);
         m_nr2SmoothLabel = new QLabel("0.85");
         m_nr2SmoothLabel->setStyleSheet(valStyle);
@@ -187,6 +197,7 @@ void AetherDspDialog::buildNr2Tab(QTabWidget* tabs)
         m_nr2QsppSlider->setRange(5, 50);  // 0.05–0.50
         m_nr2QsppSlider->setValue(20);      // default 0.20
         m_nr2QsppSlider->setStyleSheet(kSliderStyle);
+        m_nr2QsppSlider->setToolTip("Speech detection threshold. Lower values preserve quiet speech but may pass more noise.");
         sliderGrid->addWidget(m_nr2QsppSlider, row, 1);
         m_nr2QsppLabel = new QLabel("0.20");
         m_nr2QsppLabel->setStyleSheet(valStyle);
@@ -244,6 +255,9 @@ void AetherDspDialog::buildNr4Tab(QTabWidget* tabs)
         m_nr4MethodGroup->addButton(rb, i);
         methodLayout->addWidget(rb);
     }
+    m_nr4MethodGroup->button(0)->setToolTip("MMSE with Speech Presence Probability \u2014 balances noise estimation with speech preservation.");
+    m_nr4MethodGroup->button(1)->setToolTip("Recursive smoothing using critical frequency bands \u2014 good for non-stationary noise.");
+    m_nr4MethodGroup->button(2)->setToolTip("Minimum statistics using running spectral minima \u2014 robust for slowly varying noise floors.");
     m_nr4MethodGroup->button(0)->setChecked(true);
     connect(m_nr4MethodGroup, &QButtonGroup::idClicked, this, [this](int id) {
         auto& s = AppSettings::instance();
@@ -255,6 +269,7 @@ void AetherDspDialog::buildNr4Tab(QTabWidget* tabs)
 
     // Adaptive Noise
     m_nr4AdaptiveCheck = new QCheckBox("Adaptive Noise Estimation");
+    m_nr4AdaptiveCheck->setToolTip("Continuously re-estimates the noise floor as conditions change. Disable for stable environments.");
     m_nr4AdaptiveCheck->setChecked(true);
     connect(m_nr4AdaptiveCheck, &QCheckBox::toggled, this, [this](bool on) {
         auto& s = AppSettings::instance();
@@ -277,6 +292,7 @@ void AetherDspDialog::buildNr4Tab(QTabWidget* tabs)
         m_nr4ReductionSlider->setRange(0, 400);  // 0.0–40.0
         m_nr4ReductionSlider->setValue(100);      // default 10.0
         m_nr4ReductionSlider->setStyleSheet(kSliderStyle);
+        m_nr4ReductionSlider->setToolTip("Maximum noise reduction in dB. Higher values remove more noise but may affect speech.");
         sliderGrid->addWidget(m_nr4ReductionSlider, row, 1);
         m_nr4ReductionLabel = new QLabel("10.0");
         m_nr4ReductionLabel->setStyleSheet(valStyle);
@@ -302,6 +318,7 @@ void AetherDspDialog::buildNr4Tab(QTabWidget* tabs)
         m_nr4SmoothingSlider->setRange(0, 100);
         m_nr4SmoothingSlider->setValue(0);  // default 0%
         m_nr4SmoothingSlider->setStyleSheet(kSliderStyle);
+        m_nr4SmoothingSlider->setToolTip("Time-domain smoothing of the noise estimate. Higher values produce steadier but slower reduction.");
         sliderGrid->addWidget(m_nr4SmoothingSlider, row, 1);
         m_nr4SmoothingLabel = new QLabel("0");
         m_nr4SmoothingLabel->setStyleSheet(valStyle);
@@ -326,6 +343,7 @@ void AetherDspDialog::buildNr4Tab(QTabWidget* tabs)
         m_nr4WhiteningSlider->setRange(0, 100);
         m_nr4WhiteningSlider->setValue(0);  // default 0%
         m_nr4WhiteningSlider->setStyleSheet(kSliderStyle);
+        m_nr4WhiteningSlider->setToolTip("Flattens the spectral shape of residual noise so it sounds more uniform.");
         sliderGrid->addWidget(m_nr4WhiteningSlider, row, 1);
         m_nr4WhiteningLabel = new QLabel("0");
         m_nr4WhiteningLabel->setStyleSheet(valStyle);
@@ -350,6 +368,7 @@ void AetherDspDialog::buildNr4Tab(QTabWidget* tabs)
         m_nr4MaskingSlider->setRange(0, 100);  // 0.00–1.00
         m_nr4MaskingSlider->setValue(50);       // default 0.50
         m_nr4MaskingSlider->setStyleSheet(kSliderStyle);
+        m_nr4MaskingSlider->setToolTip("Depth of spectral masking. Higher values suppress more noise in masked frequency regions.");
         sliderGrid->addWidget(m_nr4MaskingSlider, row, 1);
         m_nr4MaskingLabel = new QLabel("0.50");
         m_nr4MaskingLabel->setStyleSheet(valStyle);
@@ -375,6 +394,7 @@ void AetherDspDialog::buildNr4Tab(QTabWidget* tabs)
         m_nr4SuppressionSlider->setRange(0, 100);  // 0.00–1.00
         m_nr4SuppressionSlider->setValue(50);       // default 0.50
         m_nr4SuppressionSlider->setStyleSheet(kSliderStyle);
+        m_nr4SuppressionSlider->setToolTip("Overall suppression strength. Higher values apply more aggressive noise removal.");
         sliderGrid->addWidget(m_nr4SuppressionSlider, row, 1);
         m_nr4SuppressionLabel = new QLabel("0.50");
         m_nr4SuppressionLabel->setStyleSheet(valStyle);

@@ -877,6 +877,24 @@ void RxApplet::buildUI()
 
     root->addLayout(columns);
 
+    // Tooltips
+    m_lockBtn->setToolTip("Locks the VFO frequency to prevent accidental tuning.");
+    m_rxAntBtn->setToolTip("Select the receive antenna port.");
+    m_txAntBtn->setToolTip("Select the transmit antenna port.");
+    m_stepDown->setToolTip("Decrease tuning step size.");
+    m_stepLabel->setToolTip("Current tuning step size. Scroll to change.");
+    m_stepUp->setToolTip("Increase tuning step size.");
+    m_muteBtn->setToolTip("Mutes this slice's audio output.");
+    m_afSlider->setToolTip("Audio output volume for this slice.");
+    m_sqlBtn->setToolTip("Squelch gate \u2014 silences audio when the signal drops below the threshold.");
+    m_sqlSlider->setToolTip("Squelch threshold. Increase to require a stronger signal before audio opens.");
+    m_agcCombo->setToolTip("AGC speed. Slow resists pumping on quiet bands; Fast tracks rapid signal changes.");
+    m_agcTSlider->setToolTip("AGC threshold. Higher values reduce the maximum gain applied to weak signals.");
+    m_ritOnBtn->setToolTip("Receive Incremental Tuning \u2014 offsets the receive frequency without moving transmit.");
+    m_ritZero->setToolTip("Resets the RIT offset to zero.");
+    m_xitOnBtn->setToolTip("Transmit Incremental Tuning \u2014 offsets the transmit frequency without moving receive.");
+    m_xitZero->setToolTip("Resets the XIT offset to zero.");
+
     root->addStretch();
 }
 

@@ -653,6 +653,15 @@ void VfoWidget::buildTabContent()
         panRow->addWidget(panR);
         vb->addLayout(panRow);
 
+        // Audio tab tooltips
+        m_muteBtn->setToolTip("Mutes this slice's audio output.");
+        m_afGainSlider->setToolTip("Audio output volume for this slice.");
+        m_sqlBtn->setToolTip("Squelch gate \u2014 silences audio when the signal drops below the threshold.");
+        m_sqlSlider->setToolTip("Squelch threshold. Increase to require a stronger signal before audio opens.");
+        m_agcCmb->setToolTip("AGC speed. Slow resists pumping on quiet bands; Fast tracks rapid signal changes.");
+        m_agcTSlider->setToolTip("AGC threshold. Higher values reduce the maximum gain applied to weak signals.");
+        m_panSlider->setToolTip("Pans audio between left and right channels.");
+
         // ESC (Enhanced Signal Clarity) panel — visible only when DIV is active
         m_escPanel = new QWidget;
         m_escPanel->setVisible(false);
@@ -862,6 +871,22 @@ void VfoWidget::buildTabContent()
         m_dspGrid->addWidget(m_nr4Btn,  3, 0);
         dspVb->addLayout(m_dspGrid);
 
+        // DSP button tooltips
+        m_nrBtn->setToolTip("Radio-side noise reduction \u2014 attenuates uncorrelated background noise.");
+        m_nr2Btn->setToolTip("Client-side spectral noise reduction (Ephraim-Malah MMSE). Right-click for NR2 settings.");
+        m_nbBtn->setToolTip("Noise blanker \u2014 detects and removes fast impulse noise from sparks and switching sources.");
+        m_anfBtn->setToolTip("Auto notch filter \u2014 detects and cancels persistent unwanted tones.");
+        m_apfBtn->setToolTip("CW audio peaking filter \u2014 narrows the audio passband around the CW pitch frequency to improve S/N.");
+        m_nrlBtn->setToolTip("Leaky LMS adaptive filter \u2014 preserves correlated signals while removing uncorrelated noise. Best for daily SSB/CW.");
+        m_nrsBtn->setToolTip("Spectral subtraction with voice activity detection \u2014 cuts noise most aggressively between words.");
+        m_rnnBtn->setToolTip("Deep-learning recurrent neural network \u2014 separates speech from complex noise. Best at low SNR.");
+        m_rn2Btn->setToolTip("Client-side RNNoise neural noise suppression. Effective for broadband noise on voice modes.");
+        m_nrfBtn->setToolTip("Spectral subtraction filter \u2014 computes speech/noise probability per frequency bin to remove steady noise.");
+        m_anflBtn->setToolTip("Leaky LMS notch filter \u2014 removes steady tones such as power-line hum or carriers.");
+        m_anftBtn->setToolTip("FFT-based notch filter \u2014 removes up to five persistent tones from transformers or power supplies.");
+        m_bnrBtn->setToolTip("NVIDIA GPU-accelerated neural audio denoising. Requires NVIDIA RTX 4000+ with Docker.");
+        m_nr4Btn->setToolTip("Client-side spectral bleach noise reduction (libspecbleach). Right-click for NR4 settings.");
+
         // APF level slider (hidden unless CW mode)
         {
             m_apfContainer = new QWidget;
@@ -877,6 +902,7 @@ void VfoWidget::buildTabContent()
             m_apfSlider->setRange(0, 100);
             m_apfSlider->setValue(50);
             m_apfSlider->setStyleSheet(kSliderStyle);
+            m_apfSlider->setToolTip("Adjusts APF bandwidth. Higher values narrow the peak for better CW selectivity.");
             apfVb->addWidget(m_apfSlider, 1);
             m_apfValueLbl = new QLabel("50");
             m_apfValueLbl->setStyleSheet(kLabelStyle);
@@ -1346,6 +1372,7 @@ void VfoWidget::buildTabContent()
             m_ritBtn->setCheckable(true);
             m_ritBtn->setFixedHeight(22);
             m_ritBtn->setStyleSheet(kRitBtnStyle);
+            m_ritBtn->setToolTip("Receive Incremental Tuning \u2014 offsets the receive frequency without moving transmit.");
             row->addWidget(m_ritBtn);
 
             auto* zero = new QPushButton("0");
@@ -1396,6 +1423,7 @@ void VfoWidget::buildTabContent()
             m_xitBtn->setCheckable(true);
             m_xitBtn->setFixedHeight(22);
             m_xitBtn->setStyleSheet(kRitBtnStyle);
+            m_xitBtn->setToolTip("Transmit Incremental Tuning \u2014 offsets the transmit frequency without moving receive.");
             row->addWidget(m_xitBtn);
 
             auto* zero = new QPushButton("0");
