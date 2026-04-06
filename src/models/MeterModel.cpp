@@ -218,7 +218,7 @@ void MeterModel::updateValues(const QVector<quint16>& ids, const QVector<qint16>
         } else if (idx == m_compPeakIdx) {
             // COMPPEAK: -150 (silence) → +17 dBFS (loud with PROC).
             // Pcap: PROC OFF peaks 0..+3, NOR +3..+10, DX +5..+13, DX+ +6..+17.
-            // Exponential smoothing: fast attack (α=0.6), slower release (α=0.15)
+            // Exponential smoothing: fast attack (α=0.4), slower release (α=0.2)
             // for fluid motion matching SmartSDR's gauge behavior.
             constexpr float kAttack = 0.4f;   // responsive rise
             constexpr float kRelease = 0.2f;   // smooth decay
