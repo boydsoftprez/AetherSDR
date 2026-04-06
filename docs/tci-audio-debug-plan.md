@@ -7,123 +7,225 @@ Multiple users report TCI audio broken on all platforms (Win11/macOS/Linux) in v
 - **RX**: Signals on WSJT-X waterfall but FT8 does **not decode**
 - **TX**: PTT keys radio but **no audio/RF** output
 - Confirmed by K5WH (Win), LB2EG (all platforms), K6JS (Win11)
+- LB2EG also confirms SDC skimmer gets no RX audio via TCI
 
 **Related open issues**: #841 (macOS TCI audio distorted + rigctld broken)
 
 ---
 
-## Evidence Collected
+## Empirical Evidence
 
-### TCI Protocol Spec (ExpertSDR3 v2.0)
-- Source: `ExpertSDR3/TCI` on GitHub, PDF spec v2.0 dated Jan 2024
+### Source 1: TCI Protocol Spec v2.0 (ExpertSDR3/TCI, PDF)
 - Binary header: 16 x uint32 = 64 bytes, C struct layout (native endian)
 - Valid audio sample rates: 8/12/24/48 kHz
 - Default format: float32, default channels: 2
 - `length` field = number of real samples in data[] array
-- **TX audio source**: `TRX:n,true,tci;` tells server to use TCI audio stream for TX. Without `,tci`, the mic signal is used
-- **TX_CHRONO**: Server sends TX_CHRONO (type=3) timing frames to synchronize client TX audio delivery
+- TX audio source: `TRX:n,true,tci;` tells server to use TCI audio. Without `,tci`, mic is used
+- TX_CHRONO (type=3): server sends timing frames, client responds with TX_AUDIO
 
-### WSJT-X Improved TCI Client (`salyh/wsjtx-improved`)
-- Files: `Transceiver/TCITransceiver.hpp` (header struct) and `TCITransceiver.cpp` (~1900 lines)
-- **Hardcodes `audioSampleRate = 48000`** (line 216)
-- **Does NOT send `audio_samplerate:48000;` to server** — expects server to handle it
-- Sends `audio_start:0;` to enable RX audio
-- RX: reads `pStream->data` float32 samples, applies 4x downsampling for FT8 decoder
-- TX: sends float32 stereo at 48000 Hz, type=TX_AUDIO_STREAM(2)
-- PTT: detects device name. For `"ExpertSDR3"` → sends `trx:0,true,tci;`. For anything else → sends `trx:0,true;` (no tci arg)
-- Header struct has `reserv[9]` (9 reserved fields) vs AetherSDR's `reserved[8]` + separate `channels` field — **potential struct mismatch**
+### Source 2: WSJT-X Improved (`salyh/wsjtx-improved`, `Transceiver/TCITransceiver.cpp`)
 
-### AetherSDR TCI Server (`src/core/TciServer.cpp`, `TciProtocol.cpp`)
-- Init burst sends `device:FLEX-8600 FLEX-8600;` (NOT "ExpertSDR3")
-- Init burst sends `audio_samplerate:24000;`
-- Default ClientState: rate=24000, channels=2, format=3(float32)
-- Handles `audio_samplerate:` from client → creates Resampler if rate != 24000
-- `onRxAudioReady()` (line 382): **Per-client loop with resampler, format, channels**
-- `onDaxAudioReady()` (line 476): **Hard-codes 24kHz, single frame, no per-client handling**
-- Both wired from MainWindow (lines 1972-1975): `audioDataReady → onRxAudioReady` and `daxAudioReady → onDaxAudioReady`
-- `cmdTrx()` (TciProtocol.cpp:331): **Ignores 3rd arg** — never reads `,tci`
-- TX binary handler: converts to float32 stereo, calls `feedDaxTxAudio()` with no guards
-- **No TX_CHRONO support** — never sends TX_CHRONO frames to clients
-- Header struct: `channels` is field 7 (byte offset 28), `reserved[8]` fills 32-63
+**RX audio handling** (lines 864-976):
+- `writeAudioData()` does NOT read `pStream->sampleRate` from the binary header
+- Hardcodes `m_downSampleFactor = 4` (line 195, 423)
+- Always applies 4x downsample via `fil4_()` to feed 12kHz FT8 decoder
+- Decoder buffer sized for `NTMAX * 12000` (line 953)
+- **Measured behavior**: 48kHz input → 4x downsample → 12kHz (correct). 24kHz input → 4x downsample → 6kHz (broken)
 
-### AudioEngine TX Gate (`src/core/AudioEngine.cpp:1197-1224`)
-- Low-latency route (default): gates on `m_radioTransmitting` (line 1205)
-- Radio-native route: gates on `m_transmitting && !m_daxTxMode` (line 1224)
+**TX audio framing** (`txAudioData()`, lines 890-904):
+- `QByteArray tx; tx.resize(AudioHeaderSize + len*sizeof(float)*2)` — Qt zero-fills new bytes
+- Sets: `receiver=0, sampleRate=48000, format=3, length=len, type=TxAudioStream(2)`
+- Does NOT set offset 28 (`reserv[0]` in WSJT-X struct)
+- **Measured value at offset 28**: 0 (from QByteArray zero-fill)
 
----
+**TX audio via TxChrono** (lines 866-887):
+- Only triggers when server sends TxChrono frames
+- AetherSDR never sends TxChrono → this path is dead
+- WSJT-X relies on `txAudioData()` for direct TX
 
-## Open Questions (Must Verify Through Debugging)
+**PTT command** (`do_ptt()`, lines 1074-1107):
+- Checks if device == `"ExpertSDR3"` (line 818)
+- AetherSDR advertises `device:FLEX-xxxx ...;` → WSJT-X sends `trx:0,true;` (no `,tci`)
 
-| # | Question | How to verify |
-|---|----------|---------------|
-| Q1 | Does WSJT-X send `audio_samplerate:48000;` despite code analysis suggesting it doesn't? | WebSocket text log |
-| Q2 | Which audio path fires — `onRxAudioReady`, `onDaxAudioReady`, or both? | Add counters/logging to both |
-| Q3 | What `sampleRate` value does WSJT-X receive in binary frame headers? 24000? | Binary frame header dump |
-| Q4 | Does WSJT-X header struct (`reserv[9]`) match AetherSDR's (`channels` + `reserved[8]`)? | Compare struct layouts byte-by-byte |
-| Q5 | When WSJT-X sends TX audio, what are `m_radioTransmitting` and `m_transmitting` at that moment? | Log both flags in `feedDaxTxAudio()` |
-| Q6 | Is `m_txStreamId` set (non-zero) when TCI is the only audio path? | Log stream ID in feedDaxTxAudio |
-| Q7 | Does WSJT-X expect TX_CHRONO before sending TX audio, or does it send proactively? | WebSocket binary frame capture during TX |
+**Sample rate negotiation**:
+- `audioSampleRate = 48000u` (line 216) — hardcoded
+- No code path sends `audio_samplerate:48000;` to the server
+- Sends `audio_start:0;` to enable RX streaming
 
----
-
-## Phase 1: Diagnostic Instrumentation
-
-Add targeted logging to capture the actual data flow. **All changes in `TciServer.cpp` and `AudioEngine.cpp`.**
-
-### 1A. TCI Text Command Logger (`TciServer::onTextMessage`, line 177)
-
-Add at the start of the command loop:
-```cpp
-qCInfo(lcCat) << "TCI <--" << ws->peerAddress().toString() << trimmed;
+**Header struct layout** (`TCITransceiver.hpp`, lines 24-35):
+```
+offset 0:  receiver    (uint32)
+offset 4:  sampleRate  (uint32)
+offset 8:  format      (uint32)
+offset 12: codec       (uint32)
+offset 16: crc         (uint32)
+offset 20: length      (uint32)
+offset 24: type        (uint32)
+offset 28: reserv[9]   (9 x uint32 = 36 bytes, all zero)
+offset 64: data[]      (float samples)
 ```
 
-This captures every command WSJT-X sends, answering **Q1** (whether it sends `audio_samplerate:48000;`).
+### Source 3: AetherSDR TCI Server (`src/core/TciServer.cpp`, `TciProtocol.cpp`)
 
-### 1B. RX Audio Path Counters (`onRxAudioReady` + `onDaxAudioReady`)
+**Init burst** (TciProtocol.cpp:63-151):
+- Sends `device:FLEX-xxxx ...;` (not "ExpertSDR3")
+- Sends `audio_samplerate:24000;`
+- Never sends TX_CHRONO frames
 
-In `onRxAudioReady` (line 382), add a periodic counter:
+**Client defaults** (TciServer.h:68-78):
+- `audioSampleRate = 24000`, `audioChannels = 2`, `audioFormat = 3`
+- `resampler = nullptr` (no resampling at 24kHz)
+
+**Audio negotiation** (TciServer.cpp:216-232):
+- Handles `audio_samplerate:` → creates Resampler if rate != 24000
+- Since WSJT-X never sends this, client stays at 24kHz, no resampler created
+
+**RX path A — `onRxAudioReady()`** (TciServer.cpp:382-472):
+- Input: int16 stereo, 24kHz from PanadapterStream `audioDataReady` signal
+- Per-client loop: applies `cs.resampler`, respects `cs.audioSampleRate/Format/Channels`
+- If resampler is null (default), sends 24kHz
+
+**RX path B — `onDaxAudioReady()`** (TciServer.cpp:476-508):
+- Input: int16 stereo, 24kHz from PanadapterStream `daxAudioReady` signal
+- Hard-codes `sampleRate=24000` in header
+- Builds ONE frame, broadcasts to ALL clients — no per-client handling
+- No resampler applied regardless of client settings
+
+**Both paths wired** (MainWindow.cpp:1972-1975):
 ```cpp
-static int rxMainCount = 0;
-if (++rxMainCount % 500 == 1)
-    qCInfo(lcCat) << "TCI: onRxAudioReady fired" << rxMainCount << "times,"
-                  << pcm.size() << "bytes," << m_clients.size() << "clients";
+connect(m_radioModel.panStream(), &PanadapterStream::audioDataReady,
+        m_tciServer, &TciServer::onRxAudioReady);
+connect(m_radioModel.panStream(), &PanadapterStream::daxAudioReady,
+        m_tciServer, &TciServer::onDaxAudioReady);
 ```
 
-In `onDaxAudioReady` (line 476), same pattern:
-```cpp
-static int rxDaxCount = 0;
-if (++rxDaxCount % 500 == 1)
-    qCInfo(lcCat) << "TCI: onDaxAudioReady fired" << rxDaxCount << "times,"
-                  << "channel=" << channel << pcm.size() << "bytes";
+**TX binary handler — `onBinaryMessage()`** (TciServer.cpp:310-378):
+- Parses 64-byte header via memcpy
+- Reads `hdr.channels` from offset 28
+
+**Header struct layout** (TciServer.cpp:25-36):
+```
+offset 0:  receiver    (uint32)
+offset 4:  sampleRate  (uint32)
+offset 8:  format      (uint32)
+offset 12: codec       (uint32)
+offset 16: crc         (uint32)
+offset 20: length      (uint32)
+offset 24: type        (uint32)
+offset 28: channels    (uint32)  ← WSJT-X sends 0 here
+offset 32: reserved[8] (8 x uint32 = 32 bytes)
 ```
 
-This answers **Q2** — which path fires and how often.
-
-### 1C. RX Binary Frame Header Dump (`onDaxAudioReady`, after buildAudioFrame)
-
-Log the first frame header sent to each client:
+**TX routing by channels** (TciServer.cpp:328-377):
 ```cpp
-static bool firstFrame = true;
-if (firstFrame) {
-    firstFrame = false;
-    qCInfo(lcCat) << "TCI: first RX frame header:"
-                  << "receiver=" << trx
-                  << "sampleRate=" << 24000  // or cs.audioSampleRate after fix
-                  << "format=3 channels=2"
-                  << "length=" << stereoFrames
-                  << "frameBytes=" << frame.size();
+if (hdr.format == 3) {
+    if (hdr.channels == 2) { /* forward stereo */ }
+    else if (hdr.channels == 1) { /* mono→stereo, forward */ }
+    // channels == 0 → FALLS THROUGH, no audio forwarded
 }
 ```
 
-This answers **Q3**.
+**AudioEngine TX gate** (AudioEngine.cpp:1197-1221):
+- Low-latency route (default): `if (!m_radioTransmitting) { clear buffers; return; }`
+- `m_radioTransmitting` set by interlock status from radio (async, delayed)
+- `m_transmitting` set optimistically by `setTransmit()` (immediate)
 
-### 1D. TX Audio Flow Logger (`AudioEngine::feedDaxTxAudio`, line ~1197)
+---
 
-At the top of `feedDaxTxAudio()`, before any gating:
+## Confirmed Bugs (from code analysis, not inference)
+
+### BUG A (TX): `channels=0` drops all WSJT-X TX audio
+
+**Chain of evidence**:
+1. WSJT-X `txAudioData()` creates QByteArray, resize zero-fills → offset 28 = 0
+2. WSJT-X does not explicitly set any value at offset 28 (it's `reserv[0]`)
+3. AetherSDR reads offset 28 as `hdr.channels`
+4. `onBinaryMessage()` checks `hdr.channels == 2` then `hdr.channels == 1`
+5. `channels == 0` matches neither → no code path forwards the audio
+6. Result: **100% of TX audio from WSJT-X is silently discarded**
+
+**Fix**: Treat `channels == 0` as stereo (TCI spec default is 2 channels).
+
+### BUG B (RX): 24kHz audio sent to WSJT-X expecting 48kHz
+
+**Chain of evidence**:
+1. WSJT-X never sends `audio_samplerate:48000;` (no code path does this)
+2. AetherSDR default ClientState rate = 24000, resampler = null
+3. `onDaxAudioReady()` sends 24kHz frames (hard-coded)
+4. `onRxAudioReady()` also sends 24kHz when resampler is null (which it is)
+5. WSJT-X `writeAudioData()` applies hardcoded 4x downsample
+6. 24000 / 4 = 6000 Hz effective rate into decoder
+7. FT8 decoder expects 12000 Hz → **all timing and frequency bins wrong, decode fails**
+
+**Fix**: Two parts needed:
+- Change default `audioSampleRate` to 48000 in init burst and ClientState
+- Fix `onDaxAudioReady()` to apply per-client resampling (matching `onRxAudioReady()` pattern)
+
+---
+
+## Open Questions (require runtime data)
+
+| # | Question | Why it matters | How to measure |
+|---|----------|---------------|----------------|
+| Q1 | Which RX path fires — `onRxAudioReady`, `onDaxAudioReady`, or both? | Determines which code path needs the fix. If only `onRxAudioReady` fires, Fix B only needs the default rate change | Add periodic counters to both functions |
+| Q2 | Is `m_txStreamId` non-zero when TCI is the only audio path? | If 0, VITA-49 TX packets can't be sent even after Bug A is fixed | Log `m_txStreamId` in `feedDaxTxAudio()` |
+| Q3 | What are `m_radioTransmitting` and `m_transmitting` when TX audio arrives? | Determines if the feedDaxTxAudio gate is also blocking audio after Bug A fix | Log both flags at feedDaxTxAudio entry |
+| Q4 | Is `m_daxTxUseRadioRoute` true or false? | Determines which TX code path is active (low-latency vs radio-native) | Log in `feedDaxTxAudio()` |
+| Q5 | Do users have DAX enabled in the DIGI applet when using TCI? | Affects whether DAX TX stream exists and which RX path fires | Ask in discussion or log DAX state |
+
+---
+
+## Implementation Plan
+
+### Step 1: Add diagnostic instrumentation
+
+All logging uses existing `qCInfo(lcCat)` / `qCInfo(lcAudio)` categories.
+
+**1A. Text command logger** — `TciServer::onTextMessage()` (line 193, inside command loop):
+```cpp
+qCInfo(lcCat) << "TCI <--" << ws->peerAddress().toString() << trimmed;
+```
+Measures: every command from WSJT-X. Confirms Q1 (audio_samplerate negotiation absent).
+
+**1B. RX path counters** — both `onRxAudioReady()` (line 382) and `onDaxAudioReady()` (line 476):
+```cpp
+static int count = 0;
+if (++count % 500 == 1)
+    qCInfo(lcCat) << "TCI: <functionName> fired" << count << "times,"
+                  << pcm.size() << "bytes," << m_clients.size() << "clients";
+```
+Measures: **Q1** — which path fires and at what rate.
+
+**1C. RX frame header dump** — in BOTH `onRxAudioReady()` and `onDaxAudioReady()`, log the first frame sent:
+```cpp
+static bool first = true;
+if (first) {
+    first = false;
+    qCInfo(lcCat) << "TCI: first RX frame from <functionName>:"
+                  << "sampleRate=" << <rate> << "format=" << <fmt>
+                  << "channels=" << <ch> << "length=" << <len>
+                  << "frameBytes=" << frame.size();
+}
+```
+Measures: exact header values sent to WSJT-X.
+
+**1D. TX binary frame logger** — `onBinaryMessage()` (after header parse, line ~320):
+```cpp
+static int txFrameCount = 0;
+if (++txFrameCount <= 5 || txFrameCount % 500 == 0)
+    qCInfo(lcCat) << "TCI: TX binary frame #" << txFrameCount
+                  << "receiver=" << hdr.receiver << "rate=" << hdr.sampleRate
+                  << "format=" << hdr.format << "channels=" << hdr.channels
+                  << "type=" << hdr.type << "length=" << hdr.length
+                  << "payloadBytes=" << payloadBytes;
+```
+Measures: confirms `channels=0` from WSJT-X empirically (Bug A). Also captures rate/format.
+
+**1E. TX AudioEngine logger** — `feedDaxTxAudio()` (top of function, before any gate):
 ```cpp
 static int txCallCount = 0;
-if (++txCallCount % 200 == 1)
-    qCInfo(lcAudio) << "feedDaxTxAudio called:" << txCallCount
+if (++txCallCount <= 5 || txCallCount % 200 == 0)
+    qCInfo(lcAudio) << "feedDaxTxAudio #" << txCallCount
                     << "radioTx=" << m_radioTransmitting
                     << "tx=" << m_transmitting
                     << "daxTxMode=" << m_daxTxMode
@@ -131,184 +233,119 @@ if (++txCallCount % 200 == 1)
                     << "txStreamId=" << m_txStreamId
                     << "bytes=" << pcm.size();
 ```
+Measures: **Q2**, **Q3**, **Q4** — all TX gate state at the moment audio arrives.
 
-This answers **Q5** and **Q6**.
-
-### 1E. TCI Binary TX Frame Logger (`TciServer::onBinaryMessage`, line 310)
-
-After parsing the header:
+**1F. DAX state logger** — when TCI audio starts (`onTextMessage`, after `audio_start` handling):
 ```cpp
-qCInfo(lcCat) << "TCI: RX'd TX binary frame:"
-              << "receiver=" << hdr.receiver
-              << "rate=" << hdr.sampleRate
-              << "format=" << hdr.format
-              << "channels=" << hdr.channels
-              << "type=" << hdr.type
-              << "length=" << hdr.length
-              << "payloadBytes=" << payloadBytes;
+qCInfo(lcCat) << "TCI: audio_start — DAX state:"
+              << "txStreamId=" << (m_audio ? m_audio->txStreamId() : 0)
+              << "daxTxMode=" << (m_audio ? m_audio->daxTxMode() : false);
+```
+Measures: **Q2/Q5** — whether DAX TX stream exists when TCI audio begins.
+
+### Step 2: Build, run, collect data
+
+1. Build with instrumentation: `cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo && cmake --build build -j$(nproc)`
+2. Kill any running AetherSDR, launch instrumented build
+3. Connect to FlexRadio, DIGU on 14.074 MHz
+4. Enable TCI in DIGI applet
+5. Start WSJT-X Improved with TCI rig
+6. **Collect RX data**: watch log for 1A/1B/1C output, observe WSJT-X waterfall + decode status
+7. **Collect TX data**: click TUNE in WSJT-X, watch log for 1D/1E/1F output, observe power meter
+8. Save log output to `docs/tci-debug-log-phase1.txt`
+
+### Step 3: Apply fixes (only after Step 2 data confirms each bug)
+
+**Fix A — TX channels=0** (Bug A, confirmed by code + Step 2 1D log):
+
+File: `src/core/TciServer.cpp`, function `onBinaryMessage()`, line ~327
+
+Before the format checks, normalize channels:
+```cpp
+int channels = (hdr.channels == 0) ? 2 : static_cast<int>(hdr.channels);
+```
+Then use `channels` instead of `hdr.channels` in all subsequent checks.
+
+**Fix B — RX default sample rate** (Bug B, confirmed by code + Step 2 1A/1C log):
+
+File: `src/core/TciProtocol.cpp`, line 147 — change init burst:
+```cpp
+burst += QStringLiteral("audio_samplerate:48000;");
 ```
 
-This answers **Q7** and validates the frame format.
-
----
-
-## Phase 2: Test Protocol with WSJT-X Improved
-
-### Prerequisites
-- AetherSDR debug build with logging from Phase 1
-- WSJT-X Improved installed, configured for TCI
-- FlexRadio connected, slice in DIGU mode on an active FT8 frequency (e.g. 14.074 MHz)
-- Terminal visible to watch AetherSDR log output
-
-### Test A: RX Audio Path
-
-1. Start AetherSDR, connect to radio, ensure DIGU on 14.074 MHz
-2. Enable TCI server in DIGI applet (port 50001)
-3. Start WSJT-X Improved:
-   - Settings → Radio: Rig = `TCI`, Server = `localhost:50001`
-   - Settings → Audio: TCI Audio (both input and output)
-4. Watch AetherSDR log for:
-   - `TCI <-- audio_start:0;` (confirm audio started)
-   - `TCI <-- audio_samplerate:...` (check if WSJT-X negotiates rate — **Q1**)
-   - `onRxAudioReady` and/or `onDaxAudioReady` counters (**Q2**)
-   - First RX frame header dump (**Q3**)
-5. Observe WSJT-X waterfall:
-   - Do signals appear? (confirms audio arrives)
-   - Do FT8 signals decode? (confirms correct format/rate)
-6. **Record findings** for each Q.
-
-### Test B: TX Audio Path
-
-1. Same setup as Test A
-2. In WSJT-X, click **Tune** button
-3. Watch AetherSDR log for:
-   - `TCI <-- trx:0,true;` or `trx:0,true,tci;` (**Q4** — does it send `,tci`?)
-   - Binary TX frame details from 1E (**Q7**)
-   - `feedDaxTxAudio` log entries (**Q5**, **Q6**)
-4. Check radio:
-   - Does PTT engage? (keying works)
-   - Does power meter show output? (audio reaches TX chain)
-5. If no RF output, check:
-   - Is `m_radioTransmitting` true when TX audio arrives?
-   - Is `m_txStreamId` non-zero?
-   - Is `m_daxTxUseRadioRoute` true or false?
-6. **Record findings** for each Q.
-
-### Test C: Struct Layout Verification
-
-The WSJT-X header has `reserv[9]` (9 uint32 reserved = 36 bytes) while AetherSDR has `channels` (1 uint32) + `reserved[8]` (8 uint32 = 32 bytes + 4 bytes = 36 bytes). Offset check:
-
-| Field | AetherSDR offset | WSJT-X offset |
-|-------|-----------------|---------------|
-| receiver | 0 | 0 |
-| sampleRate | 4 | 4 |
-| format | 8 | 8 |
-| codec | 12 | 12 |
-| crc | 16 | 16 |
-| length | 20 | 20 |
-| type | 24 | 24 |
-| **channels** | **28** | **28 (= reserv[0])** |
-| reserved[0-7] | 32-63 | reserv[1-8] = 32-63 |
-
-**WSJT-X puts `channels` in `reserv[0]`** — it doesn't explicitly read a `channels` field. It reads `pStream->length` for sample count and uses internal state for channel count. So the layout is binary-compatible, but WSJT-X **ignores the channels field** in received frames. No mismatch.
-
-However, WSJT-X **sends TX frames without setting channels** (it's in `reserv[0]` which is zero-initialized). AetherSDR reads `hdr.channels` from byte offset 28. If WSJT-X doesn't set it, `hdr.channels` will be 0 in received TX frames. Need to verify: **does `onBinaryMessage` handle channels=0?**
-
-Looking at the code (TciServer.cpp line 331): `if (hdr.channels == 2)` and `else if (hdr.channels == 1)` — **channels=0 falls through both checks**, and no audio is forwarded. This could be a TX bug.
-
-**Verify**: Log `hdr.channels` in the TX binary frame logger (Phase 1E).
-
----
-
-## Phase 3: Root Cause Confirmation & Fixes
-
-Apply fixes only after diagnostic data confirms the hypothesis. Prioritized by likelihood.
-
-### Fix 1 (RX): Apply per-client resampling in `onDaxAudioReady()`
-
-**Confirmed by**: Phase 2 Test A showing 24kHz frames sent when WSJT-X expects 48kHz, AND no `audio_samplerate` negotiation from WSJT-X.
-
-**File**: `src/core/TciServer.cpp`, function `onDaxAudioReady()` (lines 476-508)
-
-**Change**: Replace the single-frame broadcast with a per-client loop matching `onRxAudioReady()` pattern: apply `cs.resampler`, respect `cs.audioSampleRate`, `cs.audioFormat`, `cs.audioChannels`. Use `trx` (from DAX channel) instead of hard-coded 0 for receiver field.
-
-### Fix 2 (RX): Negotiate 48kHz for WSJT-X compatibility
-
-**Confirmed by**: WSJT-X not sending `audio_samplerate:48000;` but expecting it.
-
-**Option A**: In init burst, advertise `audio_samplerate:48000;` instead of 24000. This means the default ClientState becomes 48kHz, and the resampler is created by default. Any client that prefers 24kHz can negotiate down.
-
-**Option B**: Keep 24kHz default, but ensure the binary frame header `sampleRate` field truthfully reflects the actual rate (already does). WSJT-X would need to handle 24kHz correctly — but we can't control WSJT-X's behavior.
-
-**Recommendation**: Option A is safer since WSJT-X expects 48kHz and the TCI spec lists 48kHz as a valid rate.
-
-### Fix 3 (TX): Handle `channels=0` in `onBinaryMessage()`
-
-**Confirmed by**: Phase 1E log showing `hdr.channels=0` from WSJT-X TX frames.
-
-**File**: `src/core/TciServer.cpp`, function `onBinaryMessage()` (lines 310-378)
-
-**Change**: Treat `channels=0` as stereo (default per TCI spec). Add before the format checks:
+File: `src/core/TciServer.h`, line 72 — change default:
 ```cpp
-int channels = (hdr.channels == 0) ? 2 : hdr.channels;
+int audioSampleRate{48000};
 ```
 
-### Fix 4 (TX): Gate `feedDaxTxAudio()` for TCI timing
+File: `src/core/TciServer.cpp`, `onNewConnection()` area — create resampler by default:
+```cpp
+cs.resampler = new Resampler(24000.0, 48000, 4096);
+```
 
-**Confirmed by**: Phase 1D log showing `m_radioTransmitting=false` when TCI TX audio first arrives.
+**Fix C — `onDaxAudioReady()` per-client resampling** (confirmed by Step 2 Q1 showing this path fires):
 
-**File**: `src/core/AudioEngine.cpp`, line 1205
+File: `src/core/TciServer.cpp`, function `onDaxAudioReady()` (lines 476-508)
 
-**Change**: Allow audio to flow when either the radio is transmitting OR we locally requested TX:
+Replace single-frame broadcast with per-client loop matching `onRxAudioReady()`:
+- Iterate `m_clients`, skip if `!cs.audioEnabled`
+- Apply `cs.resampler` via `processStereoToStereo()`
+- Respect `cs.audioSampleRate`, `cs.audioFormat`, `cs.audioChannels`
+- Use `trx` (from DAX channel) for receiver field
+
+**Fix D — TX gate race** (only if Step 2 Q3 shows `m_radioTransmitting=false, m_transmitting=true` when audio arrives):
+
+File: `src/core/AudioEngine.cpp`, line 1205
+
+Change from:
+```cpp
+if (!m_radioTransmitting) {
+```
+To:
 ```cpp
 if (!m_radioTransmitting && !m_transmitting) {
 ```
 
-### Fix 5 (TX): Handle missing `,tci` argument
+**Fix E — DAX TX stream creation** (only if Step 2 Q2 shows `m_txStreamId=0`):
 
-**Confirmed by**: Log showing WSJT-X sends `trx:0,true;` without `,tci` because AetherSDR isn't identified as ExpertSDR3.
+Ensure a DAX TX stream is created when TCI receives the first TX binary frame.
+Implementation depends on Step 2 findings — may require `stream create type=dax_tx` command to radio.
 
-AetherSDR doesn't use the ExpertSDR3 TCI audio source model (it uses VITA-49 DAX TX). The `tci` argument is ExpertSDR3-specific and tells that server to route TCI audio to TX. AetherSDR's architecture routes TCI TX audio through `feedDaxTxAudio()` regardless, so this argument isn't needed — **but we should verify the audio actually reaches the VITA-49 TX path.**
+### Step 4: Build, re-test, measure
 
-### Fix 6 (TX): Ensure DAX TX stream exists
+Re-run Step 2 with fixes applied. Collect same measurements. Verify:
+- [ ] 1C log shows `sampleRate=48000` in RX frames
+- [ ] 1D log shows `channels=0` but audio is now forwarded (add log line confirming forward)
+- [ ] 1E log shows `feedDaxTxAudio` is called AND not gated/dropped
+- [ ] WSJT-X waterfall shows signals AND FT8 decodes appear
+- [ ] TUNE produces RF output (power meter > 0W)
 
-**Confirmed by**: Phase 1D log showing `m_txStreamId=0`.
+### Step 5: Regression verification
 
-If `m_txStreamId` is 0, no VITA-49 TX packets can be sent. The TX stream is created by `stream create type=dax_tx` which is normally triggered by the platform DAX bridge (`startDax()`). When only TCI is used (no platform DAX), this stream may never be created.
-
-**File**: `src/core/TciServer.cpp` or `src/gui/MainWindow.cpp`
-
-**Change**: When TCI receives the first TX binary frame, ensure a DAX TX stream exists. If `m_txStreamId == 0`, request one from the radio.
-
----
-
-## Phase 4: Verification After Fixes
-
-Re-run Phase 2 tests (A, B, C) and verify:
-- [ ] RX: FT8 signals decode in WSJT-X (not just waterfall traces)
-- [ ] TX: TUNE produces RF output (power meter > 0W)
-- [ ] TX: FT8 CQ transmits actual signal (verifiable on second receiver/WebSDR)
-- [ ] No regression: platform DAX (PipeWire/VirtualAudioBridge) still works
-- [ ] No regression: voice TX (physical mic) still works
-- [ ] Regression test for #752: external PTT + DAX TX still routes audio
+- [ ] Platform DAX (PipeWire on Linux, VirtualAudioBridge on macOS) + WSJT-X still works
+- [ ] Voice TX (physical mic, non-DAX) still works
+- [ ] #752 scenario: external PTT + DAX TX still routes audio
+- [ ] TCI client requesting 24kHz explicitly still gets 24kHz (not broken by default change)
+- [ ] Multiple TCI clients with different sample rates get correct audio
 
 ---
 
 ## Files to Modify
 
-| File | Change | Phase |
-|------|--------|-------|
-| `src/core/TciServer.cpp` | Add diagnostic logging (1A-1E) | Phase 1 |
-| `src/core/AudioEngine.cpp` | Add TX flow logging (1D) | Phase 1 |
-| `src/core/TciServer.cpp` | Per-client resampling in `onDaxAudioReady` | Phase 3 |
-| `src/core/TciServer.cpp` | Handle `channels=0` in `onBinaryMessage` | Phase 3 |
-| `src/core/AudioEngine.cpp` | Fix TX gate in `feedDaxTxAudio` | Phase 3 |
-| `src/core/TciProtocol.cpp` | Change init burst default to 48kHz | Phase 3 |
+| File | Change | Step |
+|------|--------|------|
+| `src/core/TciServer.cpp` | Diagnostic logging (1A-1D, 1F) | Step 1 |
+| `src/core/AudioEngine.cpp` | Diagnostic logging (1E) | Step 1 |
+| `src/core/TciServer.cpp` | Handle channels=0 in onBinaryMessage (Fix A) | Step 3 |
+| `src/core/TciProtocol.cpp` | Change init burst default to 48kHz (Fix B) | Step 3 |
+| `src/core/TciServer.h` | Change ClientState default to 48kHz (Fix B) | Step 3 |
+| `src/core/TciServer.cpp` | Create resampler by default (Fix B) | Step 3 |
+| `src/core/TciServer.cpp` | Per-client resampling in onDaxAudioReady (Fix C) | Step 3 |
+| `src/core/AudioEngine.cpp` | TX gate fix (Fix D) — conditional | Step 3 |
 
 ## Reference Files (read-only)
-- `src/core/TciServer.h` — ClientState struct (line 68-78)
-- `src/core/TciProtocol.cpp` — init burst (line 63-151), cmdTrx (line 331-356)
+- `src/core/TciServer.h` — ClientState struct (lines 68-78)
 - `src/core/Resampler.h` — `processStereoToStereo()` API
 - `src/gui/MainWindow.cpp` — signal wiring (lines 1970-1976)
-- TCI Spec v2.0 PDF: `/tmp/tci-spec.txt`
+- TCI Spec v2.0: `/tmp/tci-spec.txt`
 - WSJT-X Improved: `/tmp/wsjtx-improved/Transceiver/TCITransceiver.cpp`
