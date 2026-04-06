@@ -29,7 +29,12 @@ find_package(Qt6 REQUIRED COMPONENTS
     Network
     Multimedia
 )
-find_package(Qt6 QUIET COMPONENTS SerialPort)
+option(REQUIRE_SERIALPORT "Fail if Qt6 SerialPort is not found (use for release builds)" OFF)
+if(REQUIRE_SERIALPORT)
+    find_package(Qt6 REQUIRED COMPONENTS SerialPort)
+else()
+    find_package(Qt6 QUIET COMPONENTS SerialPort)
+endif()
 if(Qt6SerialPort_FOUND)
     message(STATUS "Qt6::SerialPort found — serial PTT/CW support enabled")
 else()
