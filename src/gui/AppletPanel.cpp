@@ -472,11 +472,17 @@ AppletPanel::AppletPanel(QWidget* parent) : QWidget(parent)
             // If the applet is floating, the toggle button raises/hides the
             // floating window rather than showing/hiding the docked wrapper.
             if (m_floatingWindows.contains(id)) {
-                if (checked)
-                    m_floatingWindows[id]->raise();
-                else
-                    m_floatingWindows[id]->hide();
+                if (checked) { m_floatingWindows[id]->raise(); }
+                else         { m_floatingWindows[id]->hide(); }
                 return;
+            }
+            // Re-float if the applet was floating before being toggled off (#959)
+            if (checked) {
+                const QString floatKey = QStringLiteral("FloatingApplet_%1_IsFloating").arg(id);
+                if (AppSettings::instance().value(floatKey, "False").toString() == "True") {
+                    QTimer::singleShot(0, this, [this, id]() { floatApplet(id); });
+                    return;
+                }
             }
             wrapper->setVisible(checked);
             AppSettings::instance().setValue(key, checked ? "True" : "False");
@@ -536,7 +542,21 @@ AppletPanel::AppletPanel(QWidget* parent) : QWidget(parent)
         m_tuneBtn->hide();
         btnLayout2->addWidget(m_tuneBtn);
         wrapper->hide();
-        connect(m_tuneBtn, &QPushButton::toggled, wrapper, &QWidget::setVisible);
+        connect(m_tuneBtn, &QPushButton::toggled, this, [this, wrapper](bool checked) {
+            if (m_floatingWindows.contains("TUN")) {
+                if (checked) { m_floatingWindows["TUN"]->raise(); }
+                else         { m_floatingWindows["TUN"]->hide(); }
+                return;
+            }
+            if (checked) {
+                const QString floatKey = QStringLiteral("FloatingApplet_TUN_IsFloating");
+                if (AppSettings::instance().value(floatKey, "False").toString() == "True") {
+                    QTimer::singleShot(0, this, [this]() { floatApplet("TUN"); });
+                    return;
+                }
+            }
+            wrapper->setVisible(checked);
+        });
         m_appletOrder.append({"TUN", wrapper, titleBar, m_tuneBtn});
     }
 
@@ -556,7 +576,21 @@ AppletPanel::AppletPanel(QWidget* parent) : QWidget(parent)
         m_ampBtn->hide();
         btnLayout2->addWidget(m_ampBtn);
         wrapper->hide();
-        connect(m_ampBtn, &QPushButton::toggled, wrapper, &QWidget::setVisible);
+        connect(m_ampBtn, &QPushButton::toggled, this, [this, wrapper](bool checked) {
+            if (m_floatingWindows.contains("AMP")) {
+                if (checked) { m_floatingWindows["AMP"]->raise(); }
+                else         { m_floatingWindows["AMP"]->hide(); }
+                return;
+            }
+            if (checked) {
+                const QString floatKey = QStringLiteral("FloatingApplet_AMP_IsFloating");
+                if (AppSettings::instance().value(floatKey, "False").toString() == "True") {
+                    QTimer::singleShot(0, this, [this]() { floatApplet("AMP"); });
+                    return;
+                }
+            }
+            wrapper->setVisible(checked);
+        });
         m_appletOrder.append({"AMP", wrapper, titleBar, m_ampBtn});
     }
 
@@ -594,7 +628,21 @@ AppletPanel::AppletPanel(QWidget* parent) : QWidget(parent)
         m_agBtn->hide();
         btnLayout2->addWidget(m_agBtn);
         wrapper->hide();
-        connect(m_agBtn, &QPushButton::toggled, wrapper, &QWidget::setVisible);
+        connect(m_agBtn, &QPushButton::toggled, this, [this, wrapper](bool checked) {
+            if (m_floatingWindows.contains("AG")) {
+                if (checked) { m_floatingWindows["AG"]->raise(); }
+                else         { m_floatingWindows["AG"]->hide(); }
+                return;
+            }
+            if (checked) {
+                const QString floatKey = QStringLiteral("FloatingApplet_AG_IsFloating");
+                if (AppSettings::instance().value(floatKey, "False").toString() == "True") {
+                    QTimer::singleShot(0, this, [this]() { floatApplet("AG"); });
+                    return;
+                }
+            }
+            wrapper->setVisible(checked);
+        });
         m_appletOrder.append({"AG", wrapper, titleBar, m_agBtn});
     }
 
@@ -691,8 +739,12 @@ void AppletPanel::setTunerVisible(bool visible)
 {
     if (visible) {
         m_tuneBtn->show();
-        if (!m_tuneBtn->isChecked())
-            m_tuneBtn->setChecked(true);
+        if (!m_tuneBtn->isChecked()) { m_tuneBtn->setChecked(true); }
+        // Re-float if it was floating before the device disappeared (#959)
+        const QString floatKey = QStringLiteral("FloatingApplet_TUN_IsFloating");
+        if (AppSettings::instance().value(floatKey, "False").toString() == "True") {
+            QTimer::singleShot(0, this, [this]() { floatApplet("TUN"); });
+        }
     } else {
         if (m_floatingWindows.contains("TUN")) { dockApplet("TUN"); }
         m_tuneBtn->setChecked(false);
@@ -704,8 +756,12 @@ void AppletPanel::setAmpVisible(bool visible)
 {
     if (visible) {
         m_ampBtn->show();
-        if (!m_ampBtn->isChecked())
-            m_ampBtn->setChecked(true);
+        if (!m_ampBtn->isChecked()) { m_ampBtn->setChecked(true); }
+        // Re-float if it was floating before the device disappeared (#959)
+        const QString floatKey = QStringLiteral("FloatingApplet_AMP_IsFloating");
+        if (AppSettings::instance().value(floatKey, "False").toString() == "True") {
+            QTimer::singleShot(0, this, [this]() { floatApplet("AMP"); });
+        }
     } else {
         if (m_floatingWindows.contains("AMP")) { dockApplet("AMP"); }
         m_ampBtn->setChecked(false);
@@ -717,8 +773,12 @@ void AppletPanel::setAgVisible(bool visible)
 {
     if (visible) {
         m_agBtn->show();
-        if (!m_agBtn->isChecked())
-            m_agBtn->setChecked(true);
+        if (!m_agBtn->isChecked()) { m_agBtn->setChecked(true); }
+        // Re-float if it was floating before the device disappeared (#959)
+        const QString floatKey = QStringLiteral("FloatingApplet_AG_IsFloating");
+        if (AppSettings::instance().value(floatKey, "False").toString() == "True") {
+            QTimer::singleShot(0, this, [this]() { floatApplet("AG"); });
+        }
     } else {
         if (m_floatingWindows.contains("AG")) { dockApplet("AG"); }
         m_agBtn->setChecked(false);
