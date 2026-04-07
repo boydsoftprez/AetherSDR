@@ -129,13 +129,17 @@ void FloatingAppletWindow::restoreGeometry()
     if (!screen) { screen = QGuiApplication::primaryScreen(); }
     if (!screen) { return; }
 
+    m_restoringGeometry = true;
     resize(w, h);
 
     // Wayland compositors own window placement — attempting move() is a no-op
     // on most compositors. Skip it so we don't fight the compositor.
     // On X11 (including XWayland / WSL2 with QT_QPA_PLATFORM=xcb) and on
     // Windows / macOS, move() works correctly.
-    if (QGuiApplication::platformName() == QLatin1String("wayland")) { return; }
+    if (QGuiApplication::platformName() == QLatin1String("wayland")) {
+        QTimer::singleShot(300, this, [this]() { m_restoringGeometry = false; });
+        return;
+    }
 
     const int     savedX = s.value(prefix + "_X", "0").toInt();
     const int     savedY = s.value(prefix + "_Y", "0").toInt();
@@ -150,7 +154,16 @@ void FloatingAppletWindow::restoreGeometry()
     const int y = qBound(avail.top(),
                          sGeo.y() + savedY,
                          avail.bottom() - qMin(h, avail.height()));
+
+    m_restoringGeometry = true;
     move(x, y);
+
+    // Clear the guard after 300 ms — long enough to absorb the WM's
+    // ConfigureNotify/WM_MOVE event that arrives after move(). Without this
+    // delay the WM's post-move adjustment fires moveEvent, restarts the
+    // debounce timer, and saves the slightly-wrong WM-adjusted position,
+    // causing the window to drift down a few pixels on every unhide.
+    QTimer::singleShot(300, this, [this]() { m_restoringGeometry = false; });
 }
 
 void FloatingAppletWindow::hideAndSave()
@@ -163,10 +176,9 @@ void FloatingAppletWindow::hideAndSave()
 
 void FloatingAppletWindow::showAndRestore()
 {
-    // Guard the entire show+restore sequence so that moveEvents fired by the
-    // WM repositioning the window during show() cannot start the debounce
-    // timer and overwrite the saved geometry with the wrong (centered) position.
-    // restoreGeometry() will clear m_restoringGeometry when it finishes.
+    // Suppress moveEvents from the WM repositioning the window on show()
+    // so they cannot overwrite the saved geometry before restoreGeometry() runs.
+    // restoreGeometry() owns the full guard lifetime via its own 300 ms timer.
     m_restoringGeometry = true;
     show();
     raise();
