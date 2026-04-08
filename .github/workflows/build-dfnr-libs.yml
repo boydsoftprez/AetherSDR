@@ -1,0 +1,96 @@
+name: Build DFNR Libraries
+
+# One-shot workflow: run manually to build pre-compiled DeepFilterNet3 libraries
+# for all platforms, then upload as a GitHub Release. Delete this file after use.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            platform: linux-x86_64
+            lib_name: libdeepfilter.a
+            script: bash setup-deepfilter.sh
+          - runner: ubuntu-24.04-arm
+            platform: linux-aarch64
+            lib_name: libdeepfilter.a
+            script: bash setup-deepfilter.sh
+          - runner: macos-15
+            platform: darwin-arm64
+            lib_name: libdeepfilter.a
+            script: bash setup-deepfilter.sh
+          - runner: macos-15-intel
+            platform: darwin-x86_64
+            lib_name: libdeepfilter.a
+            script: bash setup-deepfilter.sh
+          - runner: windows-latest
+            platform: windows-x86_64
+            lib_name: deepfilter.dll
+            script: .\setup-deepfilter.ps1
+
+    runs-on: ${{ matrix.runner }}
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install system deps (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libssl-dev
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build DeepFilterNet3
+        run: |
+          cargo install cargo-c
+          ${{ matrix.script }}
+
+      - name: Package library
+        shell: bash
+        run: |
+          tar czf libdeepfilter-${{ matrix.platform }}.tar.gz \
+            -C third_party/deepfilter \
+            lib/${{ matrix.platform }} \
+            include \
+            models \
+            COMMIT \
+            LICENSE
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: libdeepfilter-${{ matrix.platform }}
+          path: libdeepfilter-${{ matrix.platform }}.tar.gz
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+
+      - name: Create or update release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Delete existing release if present
+          gh release delete dfnr-libs --repo ${{ github.repository }} --yes 2>/dev/null || true
+          # Create new release with all tarballs
+          gh release create dfnr-libs \
+            --repo ${{ github.repository }} \
+            --title "DFNR Pre-built Libraries" \
+            --notes "Pre-compiled DeepFilterNet3 (libdf) libraries for CI. Commit: $(cat */COMMIT 2>/dev/null || echo 'unknown')" \
+            --prerelease \
+            libdeepfilter-*.tar.gz
