@@ -17,30 +17,22 @@ jobs:
         include:
           - runner: ubuntu-latest
             platform: linux-x86_64
-            lib_name: libdeepfilter.a
-            script: bash setup-deepfilter.sh
           - runner: ubuntu-24.04-arm
             platform: linux-aarch64
-            lib_name: libdeepfilter.a
-            script: bash setup-deepfilter.sh
           - runner: macos-15
             platform: darwin-arm64
-            lib_name: libdeepfilter.a
-            script: bash setup-deepfilter.sh
           - runner: macos-15-intel
             platform: darwin-x86_64
-            lib_name: libdeepfilter.a
-            script: bash setup-deepfilter.sh
           - runner: windows-latest
             platform: windows-x86_64
-            lib_name: deepfilter.dll
-            script: .\setup-deepfilter.ps1
 
     runs-on: ${{ matrix.runner }}
 
-    steps:
-      - uses: actions/checkout@v6
+    env:
+      DFNR_COMMIT: d375b2d8309e0935d165700c91da9de862a99c31
+      DFNR_REPO: https://github.com/Rikorose/DeepFilterNet.git
 
+    steps:
       - name: Install system deps (Linux)
         if: runner.os == 'Linux'
         run: |
@@ -50,10 +42,55 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Build DeepFilterNet3
+      - name: Build DeepFilterNet3 (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
         run: |
           cargo install cargo-c
-          ${{ matrix.script }}
+          OS=$(uname -s); ARCH=$(uname -m)
+          case "$OS-$ARCH" in
+            Linux-x86_64)  RUST_TARGET="x86_64-unknown-linux-gnu" ;;
+            Linux-aarch64) RUST_TARGET="aarch64-unknown-linux-gnu" ;;
+            Darwin-arm64)  RUST_TARGET="aarch64-apple-darwin" ;;
+            Darwin-x86_64) RUST_TARGET="x86_64-apple-darwin" ;;
+          esac
+          git clone --depth 50 "$DFNR_REPO" /tmp/DeepFilterNet
+          cd /tmp/DeepFilterNet && git checkout "$DFNR_COMMIT"
+          cargo cbuild --release -p deep_filter --features capi --target "$RUST_TARGET"
+          BUILD_DIR="target/$RUST_TARGET/release"
+          mkdir -p "$GITHUB_WORKSPACE/third_party/deepfilter/lib/${{ matrix.platform }}"
+          mkdir -p "$GITHUB_WORKSPACE/third_party/deepfilter/include"
+          mkdir -p "$GITHUB_WORKSPACE/third_party/deepfilter/models"
+          cp "$BUILD_DIR/libdeepfilter.a" "$GITHUB_WORKSPACE/third_party/deepfilter/lib/${{ matrix.platform }}/"
+          cp "$BUILD_DIR/include/deep_filter/deep_filter.h" "$GITHUB_WORKSPACE/third_party/deepfilter/include/" 2>/dev/null || true
+          cp models/DeepFilterNet3_onnx.tar.gz "$GITHUB_WORKSPACE/third_party/deepfilter/models/" 2>/dev/null || true
+          echo "$DFNR_COMMIT" > "$GITHUB_WORKSPACE/third_party/deepfilter/COMMIT"
+          cp LICENSE "$GITHUB_WORKSPACE/third_party/deepfilter/LICENSE" 2>/dev/null || true
+
+      - name: Build DeepFilterNet3 (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          cargo install cargo-c
+          $RustTarget = "x86_64-pc-windows-msvc"
+          rustup target add $RustTarget
+          git clone --depth 50 $env:DFNR_REPO "$env:TEMP\DeepFilterNet"
+          Push-Location "$env:TEMP\DeepFilterNet"
+          git checkout $env:DFNR_COMMIT
+          cargo cbuild --release -p deep_filter --features capi --target $RustTarget
+          $BuildDir = "target\$RustTarget\release"
+          $OutDir = "$env:GITHUB_WORKSPACE\third_party\deepfilter"
+          New-Item -ItemType Directory -Force -Path "$OutDir\lib\windows-x86_64" | Out-Null
+          New-Item -ItemType Directory -Force -Path "$OutDir\include" | Out-Null
+          New-Item -ItemType Directory -Force -Path "$OutDir\models" | Out-Null
+          Copy-Item "$BuildDir\deepfilter.dll" "$OutDir\lib\windows-x86_64\"
+          if (Test-Path "$BuildDir\deepfilter.dll.lib") { Copy-Item "$BuildDir\deepfilter.dll.lib" "$OutDir\lib\windows-x86_64\" }
+          if (Test-Path "$BuildDir\deepfilter.lib") { Copy-Item "$BuildDir\deepfilter.lib" "$OutDir\lib\windows-x86_64\" }
+          Copy-Item "$BuildDir\include\deep_filter\deep_filter.h" "$OutDir\include\" -ErrorAction SilentlyContinue
+          Copy-Item "models\DeepFilterNet3_onnx.tar.gz" "$OutDir\models\" -ErrorAction SilentlyContinue
+          $env:DFNR_COMMIT | Out-File -Encoding ascii -NoNewline "$OutDir\COMMIT"
+          Copy-Item "LICENSE" "$OutDir\LICENSE" -ErrorAction SilentlyContinue
+          Pop-Location
 
       - name: Package library
         shell: bash
@@ -91,6 +128,6 @@ jobs:
           gh release create dfnr-libs \
             --repo ${{ github.repository }} \
             --title "DFNR Pre-built Libraries" \
-            --notes "Pre-compiled DeepFilterNet3 (libdf) libraries for CI. Commit: $(cat */COMMIT 2>/dev/null || echo 'unknown')" \
+            --notes "Pre-compiled DeepFilterNet3 (libdf) libraries for CI. Commit: d375b2d8309e0935d165700c91da9de862a99c31" \
             --prerelease \
             libdeepfilter-*.tar.gz
