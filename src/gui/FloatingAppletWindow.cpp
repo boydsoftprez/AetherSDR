@@ -171,13 +171,21 @@ void FloatingAppletWindow::hideAndSave()
 
 void FloatingAppletWindow::showAndRestore()
 {
-    // Suppress moveEvents from the WM repositioning the window on show()
-    // so they cannot overwrite the saved geometry before restoreGeometry() runs.
-    // restoreGeometry() owns the full guard lifetime via its own 300 ms timer.
+    // Guard the entire show+restore+WM-settle sequence so no moveEvent or
+    // resizeEvent can start the debounce timer and overwrite the saved geometry.
+    //
+    // Timeline:
+    //   t=  0 ms  guard=true, show() — WM centers window, fires moveEvent (suppressed)
+    //   t=200 ms  restoreGeometry() — resize()+move() fire events (suppressed)
+    //   t=~250 ms WM sends ConfigureNotify for our move() (suppressed)
+    //   t=650 ms  guard=false — any events after this are genuine user moves
+    //
+    // 650 ms = 200 ms (restore delay) + 300 ms (WM settle) + 150 ms safety margin.
     m_restoringGeometry = true;
     show();
     raise();
     QTimer::singleShot(200, this, [this]() { restoreGeometry(); });
+    QTimer::singleShot(650, this, [this]() { m_restoringGeometry = false; });
 }
 
 void FloatingAppletWindow::hideAndSave()
