@@ -97,17 +97,20 @@ void FloatingAppletWindow::saveGeometry()
     if (!screen) { screen = QGuiApplication::primaryScreen(); }
     if (!screen) { return; }
 
-    // Store screen name (stable across reboots) and screen-relative position
-    // so that restoreGeometry() can find the right monitor by name rather than
-    // by index, and position the window correctly even if screen order changes.
-    const QRect geo       = geometry();
-    const QRect screenGeo = screen->geometry();
+    // pos() is the frame position (what move() sets). geometry() is the client
+    // area — it's offset from pos() by the decoration height. Saving geometry()
+    // and restoring with move() accumulates the decoration offset on every
+    // hide/show cycle, causing visible drift. Use pos() for x/y, geometry()
+    // for w/h (client size, consistent with resize()).
+    const QPoint framePos  = pos();
+    const QSize  clientSz  = geometry().size();
+    const QRect  screenGeo = screen->geometry();
 
     s.setValue(prefix + "_Screen", screen->name());
-    s.setValue(prefix + "_X",      QString::number(geo.x() - screenGeo.x()));
-    s.setValue(prefix + "_Y",      QString::number(geo.y() - screenGeo.y()));
-    s.setValue(prefix + "_W",      QString::number(geo.width()));
-    s.setValue(prefix + "_H",      QString::number(geo.height()));
+    s.setValue(prefix + "_X",      QString::number(framePos.x() - screenGeo.x()));
+    s.setValue(prefix + "_Y",      QString::number(framePos.y() - screenGeo.y()));
+    s.setValue(prefix + "_W",      QString::number(clientSz.width()));
+    s.setValue(prefix + "_H",      QString::number(clientSz.height()));
     s.save();
 }
 
