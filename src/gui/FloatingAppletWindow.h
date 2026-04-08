@@ -42,6 +42,7 @@ signals:
 
 protected:
     void closeEvent(QCloseEvent* ev) override;
+    void hideEvent(QHideEvent* ev) override;
     void resizeEvent(QResizeEvent* ev) override;
     void moveEvent(QMoveEvent* ev) override;
 
@@ -50,6 +51,7 @@ private:
     QVBoxLayout* m_contentLayout{nullptr};
     QTimer*      m_saveTimer{nullptr};        // debounce geometry saves on resize/move
     bool         m_restoringGeometry{false};  // suppresses debounce during restoreGeometry/showAndRestore
+    bool         m_appShuttingDown{false};    // set on aboutToQuit — prevents dockRequested on close
 };
 
 } // namespace AetherSDR

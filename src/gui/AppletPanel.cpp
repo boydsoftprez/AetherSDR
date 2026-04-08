@@ -37,6 +37,13 @@
 
 namespace AetherSDR {
 
+// Applet IDs like "P/CW" contain '/' which is invalid in XML element names.
+// Use this when forming AppSettings keys so the key is always safe to write.
+static QString floatKey(const QString& id)
+{
+    return QStringLiteral("FloatingApplet_%1_IsFloating").arg(QString(id).replace('/', '_'));
+}
+
 const QStringList AppletPanel::kDefaultOrder = {
     "RX", "TUN", "AMP", "TX", "PHNE", "P/CW", "EQ", "DIGI", "MTR", "AG"
 };
@@ -478,7 +485,7 @@ AppletPanel::AppletPanel(QWidget* parent) : QWidget(parent)
             }
             // Re-float if the applet was floating before being toggled off (#959)
             if (checked) {
-                const QString floatKey = QStringLiteral("FloatingApplet_%1_IsFloating").arg(id);
+                const QString floatKey = AetherSDR::floatKey(id);
                 if (AppSettings::instance().value(floatKey, "False").toString() == "True") {
                     QTimer::singleShot(0, this, [this, id]() { floatApplet(id); });
                     return;
@@ -672,7 +679,7 @@ AppletPanel::AppletPanel(QWidget* parent) : QWidget(parent)
 
     // ── Restore floating state ──────────────────────────────────────────────
     for (auto& entry : m_appletOrder) {
-        const QString floatKey = QStringLiteral("FloatingApplet_%1_IsFloating").arg(entry.id);
+        const QString floatKey = AetherSDR::floatKey(entry.id);
         if (AppSettings::instance().value(floatKey, "False").toString() == "True") {
             // Use QTimer::singleShot so the window system is ready before showing
             QTimer::singleShot(0, this, [this, id = entry.id]() { floatApplet(id); });
@@ -890,7 +897,7 @@ void AppletPanel::floatApplet(const QString& id)
 
     // Persist floating state
     AppSettings::instance().setValue(
-        QStringLiteral("FloatingApplet_%1_IsFloating").arg(id), "True");
+        AetherSDR::floatKey(id), "True");
     AppSettings::instance().save();
 }
 
@@ -948,7 +955,7 @@ void AppletPanel::dockApplet(const QString& id)
 
     // Persist floating state
     AppSettings::instance().setValue(
-        QStringLiteral("FloatingApplet_%1_IsFloating").arg(id), "False");
+        AetherSDR::floatKey(id), "False");
     AppSettings::instance().save();
 }
 
