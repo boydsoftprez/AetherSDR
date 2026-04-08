@@ -4023,9 +4023,9 @@ void MainWindow::onSliceAdded(SliceModel* s)
 
             // Restore DEXP (downward expander) — radio does not persist across sessions
             bool dexpSaved = settings.value("DexpEnabled", "False").toString() == "True";
+            int dexpLevel = settings.value("DexpLevel", "0").toInt();
             if (dexpSaved) {
                 m_radioModel.transmitModel().setDexp(true);
-                int dexpLevel = settings.value("DexpLevel", "0").toInt();
                 if (dexpLevel > 0) {
                     m_radioModel.transmitModel().setDexpLevel(dexpLevel);
                 }
