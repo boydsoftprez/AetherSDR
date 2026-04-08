@@ -932,10 +932,11 @@ void AppletPanel::dockApplet(const QString& id)
         }
     }
 
-    // Save geometry before destroying the window
+    // Stop the debounce timer and save geometry before destroying the window.
+    // hideAndSave() does this atomically so a pending timer callback cannot
+    // fire saveGeometry() on the already-hidden window with a stale pos().
     if (win) {
-        win->saveGeometry();
-        win->hide();
+        win->hideAndSave();
         win->deleteLater();
     }
     m_floatingWindows.remove(id);
