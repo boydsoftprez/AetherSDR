@@ -1527,15 +1527,26 @@ QWidget* RadioSetupDialog::buildAudioTab()
 
     // Wire device changes to AudioEngine
     if (m_audio) {
+        // Route through QueuedConnection so setInputDevice/setOutputDevice
+        // execute on the audio worker thread, preventing use-after-free on
+        // macOS CoreAudio when switching devices from the GUI thread (#1114).
         connect(inCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
-                this, [this, inCombo, inDevices](int idx) {
-            if (idx >= 0 && idx < inDevices.size())
-                m_audio->setInputDevice(inDevices[idx]);
+                this, [this, inDevices](int idx) {
+            if (idx >= 0 && idx < inDevices.size()) {
+                const QAudioDevice dev = inDevices[idx];
+                QMetaObject::invokeMethod(m_audio, [this, dev]() {
+                    m_audio->setInputDevice(dev);
+                }, Qt::QueuedConnection);
+            }
         });
         connect(outCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
-                this, [this, outCombo, outDevices](int idx) {
-            if (idx >= 0 && idx < outDevices.size())
-                m_audio->setOutputDevice(outDevices[idx]);
+                this, [this, outDevices](int idx) {
+            if (idx >= 0 && idx < outDevices.size()) {
+                const QAudioDevice dev = outDevices[idx];
+                QMetaObject::invokeMethod(m_audio, [this, dev]() {
+                    m_audio->setOutputDevice(dev);
+                }, Qt::QueuedConnection);
+            }
         });
     }
 
