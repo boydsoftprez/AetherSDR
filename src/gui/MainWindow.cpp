@@ -2359,8 +2359,6 @@ void MainWindow::buildMenuBar()
                 qDebug() << "MainWindow: audio compression changed from" << prevComp
                          << "to" << newComp << "— recreating audio stream";
                 m_radioModel.removeRxAudioStream();
-                // TX always uses Opus (radio enforces it on remote_audio_tx).
-                // RX compression change doesn't affect TX encoding.
                 QTimer::singleShot(500, this, [this]() {
                     m_radioModel.createRxAudioStream();
                 });

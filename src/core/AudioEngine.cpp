@@ -335,6 +335,7 @@ void AudioEngine::setNr2GainMethod(int m)   { if (m_nr2) m_nr2->setGainMethod(m)
 void AudioEngine::setNr2NpeMethod(int m)    { if (m_nr2) m_nr2->setNpeMethod(m); }
 void AudioEngine::setNr2AeFilter(bool on)   { if (m_nr2) m_nr2->setAeFilter(on); }
 
+
 #ifdef HAVE_SPECBLEACH
 
 void AudioEngine::setNr4Enabled(bool on)
