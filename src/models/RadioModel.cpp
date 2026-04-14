@@ -331,6 +331,14 @@ void RadioModel::disconnectFromRadio()
         m_wanConn->disconnect(this);  // remove signal connections to prevent duplicates on reconnect (#224)
         m_wanConn->disconnectFromRadio();
         m_wanConn = nullptr;
+    } else if (m_connection->isConnected()) {
+        // Graceful disconnect: send stream remove + client disconnect and
+        // wait for TCP flush before closing. Prevents Maestro lockup. (#1359)
+        quint32 handle = clientHandle();
+        QString streamId = m_rxAudioStreamId;
+        QMetaObject::invokeMethod(m_connection, [this, handle, streamId]() {
+            m_connection->gracefulDisconnect(handle, streamId);
+        });
     } else {
         QMetaObject::invokeMethod(m_connection, &RadioConnection::disconnectFromRadio);
     }
@@ -340,7 +348,14 @@ void RadioModel::forceDisconnect()
 {
     // Close TCP without setting m_intentionalDisconnect — allows auto-reconnect
     // when the radio reappears in discovery or via the repeating reconnect timer.
-    QMetaObject::invokeMethod(m_connection, &RadioConnection::disconnectFromRadio);
+    if (m_connection->isConnected()) {
+        quint32 handle = clientHandle();
+        QMetaObject::invokeMethod(m_connection, [this, handle]() {
+            m_connection->gracefulDisconnect(handle, QString());
+        });
+    } else {
+        QMetaObject::invokeMethod(m_connection, &RadioConnection::disconnectFromRadio);
+    }
 }
 
 void RadioModel::setTransmit(bool tx)
