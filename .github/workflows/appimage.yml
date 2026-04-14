@@ -95,12 +95,6 @@ jobs:
               AppDir/usr/bin/
           fi
 
-          # NOTE: Do NOT bundle OpenSSL in the AppImage. Linux distros ship
-          # libssl.so.3 / libcrypto.so.3 as system libraries. Bundling the
-          # Ubuntu 22.04 version causes ABI conflicts with the host's PipeWire,
-          # GStreamer, and PulseAudio, crashing the app on launch (#1362).
-          mkdir -p AppDir/usr/lib
-
           # Bundle Qt6 multimedia backend plugin
           if [ "${{ matrix.use_aqt }}" = "true" ]; then
             QT_PLUGIN_PATH=${{ github.workspace }}/Qt/6.7.3/gcc_64/plugins
@@ -135,10 +129,6 @@ jobs:
           else
             export QMAKE=$(which qmake6 2>/dev/null || which qmake)
           fi
-          # Exclude OpenSSL from the AppImage — bundled Ubuntu 22.04 versions
-          # conflict with host PipeWire/GStreamer on newer distros (#1362, #1389).
-          # linuxdeploy pulls them as transitive deps of libgssapi/libsystemd.
-          export LINUXDEPLOY_EXCLUDE_LIBS="libssl.so.3:libcrypto.so.3"
           ./linuxdeploy-${{ matrix.arch }}.AppImage \
             --appdir AppDir \
             --plugin qt \
