@@ -2,6 +2,7 @@
 #include "SpectrumOverlayMenu.h"
 #include "VfoWidget.h"
 #include "SliceColors.h"
+#include <QVariantAnimation>
 
 #ifdef AETHER_GPU_SPECTRUM
 #include <rhi/qrhi.h>
@@ -567,17 +568,115 @@ void SpectrumWidget::setFrequencyRange(double centerMhz, double bandwidthMhz)
     const double oldCenterMhz = m_centerMhz;
     const double oldBandwidthMhz = m_bandwidthMhz;
 
-    if (oldBandwidthMhz > 0.0 && bandwidthMhz > 0.0) {
-        reprojectWaterfall(oldCenterMhz, oldBandwidthMhz, centerMhz, bandwidthMhz);
+    // Stale-echo guard: if animation is running and the incoming center equals
+    // the value m_centerMhz had when the animation started, this is a status
+    // echo from a radio command sent *before* the pan-follow (e.g. a floor-level
+    // change whose echo-back includes the pre-animation center).  Accepting it
+    // would either reverse the in-flight animation or trigger a false large-shift
+    // that blanks the spectrum, so skip it.
+    if (m_panCenterAnim &&
+        m_panCenterAnim->state() != QAbstractAnimation::Stopped &&
+        std::abs(centerMhz - m_panCenterStart) < 1e-9) {
+        return;
     }
 
-    qDebug() << "SpectrumWidget::setFrequencyRange center="
-             << QString::number(centerMhz, 'f', 6)
-             << "bw=" << QString::number(bandwidthMhz, 'f', 6)
-             << "bins=" << m_smoothed.size();
-    m_centerMhz    = centerMhz;
-    m_bandwidthMhz = bandwidthMhz;
-    markOverlayDirty();
+    // Distinguish pan-follow nudges (#989) from large jumps (band change, click-to-tune).
+    // Nudges shift center by ~10% of halfBw; 25% threshold comfortably separates the two.
+    const double halfBw = bandwidthMhz / 2.0;
+    const bool bwChanged = (bandwidthMhz != m_bandwidthMhz);
+    // Compare incoming center against the animation's *destination* (m_panCenterTarget),
+    // not the mid-animation position (m_centerMhz).  During a 200 ms nudge the animated
+    // center is far from its start, so a subsequent nudge of similar magnitude would
+    // falsely exceed the 25 % threshold and trigger a large-shift clear+blank.
+    const double refForShiftCheck = (m_panCenterAnim &&
+        m_panCenterAnim->state() != QAbstractAnimation::Stopped)
+        ? m_panCenterTarget : m_centerMhz;
+    const bool largeShift = bwChanged ||
+        (halfBw > 0.0 && std::abs(centerMhz - refForShiftCheck) > halfBw * 0.25);
+
+    if (bwChanged) {
+        m_bandwidthMhz = bandwidthMhz;
+    }
+
+    if (largeShift) {
+        // Large jump: cancel any running animation and snap immediately.
+        if (m_panCenterAnim && m_panCenterAnim->state() != QAbstractAnimation::Stopped) {
+            m_panCenterAnim->stop();
+        }
+        if (oldBandwidthMhz > 0.0 && bandwidthMhz > 0.0) {
+            reprojectWaterfall(oldCenterMhz, oldBandwidthMhz, centerMhz, bandwidthMhz);
+        }
+        m_bins.clear();
+        m_smoothed.clear();
+        m_wfWriteRow = 0;
+        m_centerMhz       = centerMhz;
+        m_panCenterTarget = centerMhz;
+        markOverlayDirty();
+        return;
+    }
+
+    // Small nudge: animate m_centerMhz smoothly so the VFO widget glides rather
+    // than snapping. The radio command has already been sent with the final center
+    // by panFollowVfo; the echo-back will be a no-op once the animation lands.
+
+    // Guard: if already animating toward this exact target (e.g. radio echo-back
+    // arriving mid-animation), don't restart — just let the current animation finish.
+    if (m_panCenterAnim &&
+        m_panCenterAnim->state() != QAbstractAnimation::Stopped &&
+        std::abs(m_panCenterTarget - centerMhz) < 1e-9) {
+        return;
+    }
+
+    // Only reproject the waterfall when starting a fresh animation.  If we are
+    // already animating toward a different target (rapid edge scroll: multiple
+    // echo-backs arrive before the first animation finishes), skip the reproject.
+    // The waterfall was already shifted at the start of this animation session;
+    // re-shifting on every retarget causes repeated horizontal jumps.
+    const bool animAlreadyRunning = m_panCenterAnim &&
+        m_panCenterAnim->state() != QAbstractAnimation::Stopped;
+
+    if (!animAlreadyRunning) {
+        // Record the start position so the stale-echo guard above can
+        // recognise echo-backs that refer to the pre-animation center.
+        m_panCenterStart = m_centerMhz;
+
+        // Scroll waterfall history to align with the new center before the
+        // animation begins.  Without this, old rows (at old center) and new
+        // rows (at new center) are at different pixel positions, so signals
+        // appear to jump vertically.  We do NOT reset m_wfWriteRow or clear
+        // bins — the shift is small and new rows fill in naturally.
+        reprojectWaterfall(m_centerMhz, m_bandwidthMhz, centerMhz, m_bandwidthMhz);
+    }
+
+    m_panCenterTarget = centerMhz;
+
+    if (!m_panCenterAnim) {
+        m_panCenterAnim = new QVariantAnimation(this);
+        // InOutQuad: slow start → fast middle → slow end.
+        // First frame moves ~1% of total distance so the widget eases in rather
+        // than snapping, while still completing in a perceptually short time.
+        m_panCenterAnim->setEasingCurve(QEasingCurve::InOutQuad);
+        connect(m_panCenterAnim, &QVariantAnimation::valueChanged, this,
+            [this](const QVariant& v) {
+                m_centerMhz = v.toDouble();
+                markOverlayDirty();
+            });
+        connect(m_panCenterAnim, &QVariantAnimation::finished, this,
+            [this]() {
+                m_centerMhz = m_panCenterTarget;  // land exactly on target
+                markOverlayDirty();
+            });
+    }
+
+    // Stop any in-progress animation toward a *different* target and restart
+    // from the current visual position toward the new one.
+    if (m_panCenterAnim->state() != QAbstractAnimation::Stopped) {
+        m_panCenterAnim->stop();
+    }
+    m_panCenterAnim->setStartValue(m_centerMhz);
+    m_panCenterAnim->setEndValue(centerMhz);
+    m_panCenterAnim->setDuration(200);
+    m_panCenterAnim->start();
 }
 
 void SpectrumWidget::setSpectrumFrac(float f)
@@ -748,6 +847,11 @@ void SpectrumWidget::updateSpectrum(const QVector<float>& binsDbm)
                 // Only adjust if change is significant (> 1 dB)
                 float currentMin = m_refLevel - m_dynamicRange;
                 if (std::abs(newMin - currentMin) > 1.0f) {
+                    // Optimistic update: suppress re-firing on subsequent FFT frames
+                    // while waiting for the radio to confirm and echo the new range.
+                    // Without this, every FFT frame would re-emit until the echo-back
+                    // arrives, producing a burst of identical display pan set commands.
+                    m_dynamicRange = newRange;
                     emit dbmRangeChangeRequested(newMin, m_refLevel);
                 }
             }
@@ -2841,7 +2945,9 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
 
     cb->endPass();
 
-    // Reposition VFO widgets (same as paintEvent)
+    // Reposition VFO widgets. paintEvent() is compiled only in software mode
+    // (#else !AETHER_GPU_SPECTRUM), so in GPU mode this is the sole place VFOs
+    // are repositioned. Logic mirrors the paintEvent() block below exactly.
     {
         struct VfoPos { int sliceId; int x; VfoWidget* w; int splitPartner; };
         QVector<VfoPos> vfos;
@@ -2860,9 +2966,8 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
         });
 
         const int panelW = vfos.isEmpty() ? 0 : vfos[0].w->width();
-        const int specW = specRect.width();
+        const int specW  = specRect.width();
 
-        // First pass: assign directions for split pairs
         QMap<int, VfoWidget::FlagDir> dirMap;
         for (int i = 0; i < vfos.size(); ++i) {
             if (vfos[i].splitPartner < 0) continue;
@@ -2882,7 +2987,6 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
                 dirMap[vfos[rightIdx].sliceId] = VfoWidget::ForceLeft;
         }
 
-        // Second pass: RTTY/DIGL force right
         for (const auto& so : m_sliceOverlays) {
             if (so.mode == "RTTY" || so.mode == "DIGL")
                 dirMap[so.sliceId] = VfoWidget::ForceRight;
@@ -2908,8 +3012,8 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
                         dir = VfoWidget::ForceRight;
                         if (vfos[i].x + panelW > specW) dir = VfoWidget::ForceLeft;
                     } else {
-                        int gapLeft = vfos[i].x - vfos[i-1].x;
-                        int gapRight = vfos[i+1].x - vfos[i].x;
+                        const int gapLeft  = vfos[i].x - vfos[i-1].x;
+                        const int gapRight = vfos[i+1].x - vfos[i].x;
                         dir = (gapLeft >= gapRight) ? VfoWidget::ForceLeft : VfoWidget::ForceRight;
                     }
                 }
