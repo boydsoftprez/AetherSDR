@@ -1,0 +1,22 @@
+# Copyright (c) 2026 J.J. Boyd. Original diagnostic source, authored with Codex.
+# SPDX-License-Identifier: MIT
+Port 22222
+AddressFamily any
+HostKey /etc/ssh/ssh_host_ed25519_key
+PermitRootLogin prohibit-password
+PubkeyAuthentication yes
+AuthenticationMethods publickey
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PermitEmptyPasswords no
+AuthorizedKeysFile .ssh/authorized_keys
+AllowUsers root
+AllowAgentForwarding no
+AllowTcpForwarding no
+X11Forwarding no
+PermitTunnel no
+UsePAM no
+PrintMotd no
+PidFile /run/sshd/probe.pid
+Subsystem sftp internal-sftp
+LogLevel VERBOSE
