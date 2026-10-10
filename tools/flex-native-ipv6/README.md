@@ -3,7 +3,8 @@
 Original clean-room MIT sources by J.J. Boyd, authored with Codex. This package
 preserves the bounded Linux socket experiment used with the IPv6 AetherSDR
 client. It contains no vendor implementation, private ABI, radio firmware,
-credentials, recordings or deployment bootstrap.
+credentials or recordings. The operator execution path and firmware-specific
+setup jobs are included as source.
 
 The tested flow was AetherSDR over native IPv6 TCP control and UDP receive
 streams to the radio's SmartSDR process. An explicitly selected `LD_PRELOAD`
@@ -16,7 +17,14 @@ proxy, container packet forwarding or address translation on the wire.
 | --- | --- |
 | [shim/](shim/README.md) | Original public Linux/glibc socket shim and isolated local fixtures |
 | [diagnostic-container/](diagnostic-container/README.md) | ARM64 SSH network inspection recipe; operator supplies a fresh public key |
-| [host-reference/](host-reference/README.md) | Archived host acceptance/revert jobs and fake-system tests |
+| [native-waveform/](native-waveform/README.md) | Native authenticated descriptor helper and private ARM build recipe |
+| [operator/](operator/README.md) | Configurable SSH/upload runner, actual native namespace execution, and receive probes |
+| [deployment/](deployment/README.md) | Verified-digest acceptance/revert jobs and native IPv6 boot/network setup |
+| [host-reference/](host-reference/README.md) | Unchanged historical host jobs for comparison |
+
+**To reconstruct the complete successful arrangement, start with [WORKING-SHAPE.md](WORKING-SHAPE.md).**
+It connects the container, native helper, host IPv6 configuration, rebuilt shim,
+SmartSDR activation, Aether connection, acceptance and rollback.
 
 For the measured SmartSDR socket setup, selection was:
 
@@ -34,9 +42,10 @@ Pre-bind SO_REUSEADDR, TCP_NODELAY and the successful SO_RCVBUF request are
 preserved, alongside ordinary descriptor/nonblocking flags.
 
 The live evidence came from a FLEX-8600M running SmartSDR 4.2.18.41174,
-native ARM64 glibc 2.36 and Linux 5.15.92-v8+. The host already had native
-IPv6 enabled and an owner-authorized administrative execution path. Neither
-the shim nor the diagnostic container establishes those prerequisites.
+native ARM64 glibc 2.36 and Linux 5.15.92-v8+. The host needed native
+IPv6 enabled and an owner-authorized administrative execution path. The
+`native-waveform/`, `operator/` and `deployment/` sources now record the
+complete measured path used to establish them.
 See [EVIDENCE.md](EVIDENCE.md) for sanitized measurements and their limits.
 
 Acceptance retained a library and a systemd drop-in under `/run`, so activation
@@ -44,7 +53,9 @@ lasted for the current boot. Guarded service restarts first started the installe
 vendor `inhibit-power-pic.service`. An earlier unguarded restart caused a full
 radio reboot. The archived jobs verify their own exact artifact, active native
 process/socket state, an independent rollback timer, and guarded recovery.
-They are host-specific references rather than a turnkey deployment method.
+The reusable deployment jobs require an explicit verified library digest;
+the unchanged historical originals retain their recorded artifact digest.
+The boot/network jobs remain strictly matched to the observed firmware files.
 
 Run the shim fixtures only with the isolated procedure in its README. The full
 suite assigns a test loopback alias and needs NET_ADMIN inside that isolated
@@ -58,7 +69,7 @@ does not establish RV, iPhone clients, WAN routing, transmit operation,
 long-term reliability, or support for other firmware and radio models. Review
 the shim lifecycle limits before considering any independent host experiment.
 
-Each subdirectory retains its MIT license. The shim and archival reference
+Each subdirectory retains its MIT license. The shim, native Go helper and archival reference
 sources are preserved unchanged; diagnostic files add explicit original MIT
 notices. Public socket interfaces and observed behavior informed the shim.
 The [Flex waveform example](https://github.com/flexradio/waveform-example)
