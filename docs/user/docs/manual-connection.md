@@ -42,6 +42,13 @@ The **Radio IP address** group starts with two rows:
 
 If your VPN creates more than one active network adapter, open **Advanced: choose the VPN source path** and pick the **Source path:**. Most users can leave this on Auto.
 
+For an IPv6 connection, enter the IPv6 address directly, for example `2001:db8::25`,
+and leave **Source path:** on Auto. AetherSDR binds its UDP stream socket to the
+IPv6 source used by the TCP connection. The Advanced source selector lists IPv4
+paths only. The radio's SmartSDR service must accept IPv6 TCP connections and
+send its UDP streams over IPv6; an IPv6 address on the radio alone does not
+enable that service support.
+
 ### Port forwarding (FlexRadio remote access)
 
 For FlexRadio remote access without SmartLink, forward these ports on your router:

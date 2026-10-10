@@ -25,6 +25,8 @@ See [Radio Setup](./radio-setup.md).
 
 Choose the computer's microphone (**Input**) and speaker (**Output**) devices. The selection is saved and restored at startup, and you can switch devices while connected.
 
+On a FlexRadio, you can turn **PC Audio** on before connecting; received audio starts after the radio connection is ready.
+
 AetherSDR handles sample-rate conversion itself. The microphone is captured at whatever rate the device offers, processed at 48 kHz, and converted once to the radio's transport rate. The PC microphone is used for transmit when the radio's mic source is **PC** (see [Choosing the mic source](#choosing-the-mic-source)).
 
 ### When a device is plugged in or removed
